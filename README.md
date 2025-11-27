@@ -1,6 +1,15 @@
 # Inclusive AI Meeting Bot
 
-## To run:
+AI Meeting Bot built using Recall.ai Meeting Bot API + OpenAI Responses API+ React + Vite for the frontend.
+
+## Features
+
+ - Feature 1
+ - Feature 2
+ - Feature 3
+ - Feature 4
+
+## How To Run
 
 1. Set keys in .env (your actual API Keys)
     - an example format is shown in .env.example 
