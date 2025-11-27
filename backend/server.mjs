@@ -1,3 +1,4 @@
+// backend/server.mjs
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -85,6 +86,9 @@ app.post('/api/bots', async (req, res) => {
         const payload = {
             meeting_url: meetingUrl,
             recording_config: {
+                // audio-only (no video_mixed_mp4)
+                audio_mixed_mp3: {},
+
                 transcript: {
                     provider: {
                         recallai_streaming: {
@@ -96,8 +100,7 @@ app.post('/api/bots', async (req, res) => {
                         use_separate_streams_when_available: true,
                     },
                 },
-                video_mixed_mp4: null,
-                audio_mixed_mp3: {},
+
                 realtime_endpoints: [
                     {
                         type: 'webhook',
@@ -142,9 +145,11 @@ app.post('/api/bots', async (req, res) => {
         botsState.set(botId, {
             botId,
             meetingUrl,
+            status: data.status || 'created',
             transcripts: [],
             participants: {},
             partialTranscript: '',
+            ended: false,
         });
 
         console.log('[Bot] Created:', botId);
@@ -155,9 +160,9 @@ app.post('/api/bots', async (req, res) => {
     }
 });
 
-// Webhook for real-time events
-// Webhook for real-time events
+// Webhook for realtime events
 app.post('/api/recall/webhook', (req, res) => {
+    // ACK quickly
     res.json({ ok: true });
 
     const evt = req.body;
@@ -189,7 +194,7 @@ app.post('/api/recall/webhook', (req, res) => {
                 evt.data?.data?.participant?.name || 'Unknown';
 
             state.transcripts.push({
-                id: `${Date.now()}`,
+                id: `${Date.now()}-${state.transcripts.length}`,
                 text,
                 speakerName,
             });
@@ -215,23 +220,32 @@ app.post('/api/recall/webhook', (req, res) => {
         }
 
         default:
-            // 🔵 FIXED: handle participant_events.* with the extra .data layer
             if (evt.event.startsWith('participant_events.')) {
-                // Some events use data.data, some may use data directly → support both
-                const pdata = (evt.data && evt.data.data) ? evt.data.data : evt.data || {};
-                const norm = normalizeParticipant(pdata.participant);
+                // Some webhooks use data.participant, others data.data.participant
+                const rawParticipant =
+                    evt?.data?.data?.participant || evt?.data?.participant;
+
+                const norm = normalizeParticipant(rawParticipant);
                 if (!norm) break;
 
-                if (!state.participants) state.participants = {};
-
                 if (evt.event === 'participant_events.join') {
-                    state.participants[norm.id] = norm;
+                    state.participants[norm.id] = {
+                        ...(state.participants[norm.id] || {}),
+                        ...norm,
+                        inCall: true,
+                    };
                 }
 
                 if (evt.event === 'participant_events.leave') {
-                    if (state.participants[norm.id]) {
+                    if (state.participants[norm.id])
                         state.participants[norm.id].inCall = false;
-                    }
+                }
+
+                if (evt.event === 'participant_events.update') {
+                    state.participants[norm.id] = {
+                        ...(state.participants[norm.id] || {}),
+                        ...norm,
+                    };
                 }
 
                 if (evt.event === 'participant_events.speech_on') {
@@ -241,9 +255,8 @@ app.post('/api/recall/webhook', (req, res) => {
                 }
 
                 if (evt.event === 'participant_events.speech_off') {
-                    if (state.participants[norm.id]) {
+                    if (state.participants[norm.id])
                         state.participants[norm.id].isSpeaking = false;
-                    }
                 }
             }
     }
@@ -251,6 +264,79 @@ app.post('/api/recall/webhook', (req, res) => {
     botsState.set(botId, state);
 });
 
+// --- NEW: Stop bot (leave call + stop recording) ---
+app.post('/api/bots/:id/stop', async (req, res) => {
+    const botId = req.params.id;
+
+    const state = botsState.get(botId);
+    if (!state) {
+        return res.status(404).json({ error: 'Unknown bot id' });
+    }
+
+    try {
+        // 1) Try to stop recording (non-fatal if it fails)
+        try {
+            const stopUrl = `${RECALL_BASE}/api/v1/bot/${botId}/stop_recording/`;
+            const stopResp = await fetch(stopUrl, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Token ${RECALL_API_KEY}`,
+                    accept: 'application/json',
+                },
+            });
+
+            if (!stopResp.ok) {
+                const text = await stopResp.text();
+                console.warn(
+                    '[Bot] stop_recording failed:',
+                    stopResp.status,
+                    text,
+                );
+            } else {
+                console.log('[Bot] stop_recording OK for', botId);
+            }
+        } catch (err) {
+            console.warn('[Bot] stop_recording error (ignored):', err);
+        }
+
+        // 2) Remove bot from call
+        const leaveUrl = `${RECALL_BASE}/api/v1/bot/${botId}/leave_call/`;
+        const leaveResp = await fetch(leaveUrl, {
+            method: 'POST',
+            headers: {
+                Authorization: `Token ${RECALL_API_KEY}`,
+                accept: 'application/json',
+            },
+        });
+
+        if (!leaveResp.ok) {
+            const text = await leaveResp.text();
+            console.error('[Bot] leave_call failed:', leaveResp.status, text);
+            return res
+                .status(500)
+                .json({ error: 'Failed to remove bot from call', details: text });
+        }
+
+        console.log('[Bot] leave_call OK for', botId);
+
+        // 3) Mark bot as ended in state
+        state.ended = true;
+        state.endedAt = new Date().toISOString();
+        state.status = 'ended';
+
+        Object.values(state.participants).forEach((p) => {
+            p.inCall = false;
+            p.isSpeaking = false;
+        });
+
+        botsState.set(botId, state);
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('[Bot] Error in /api/bots/:id/stop:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
 // Poll state
 app.get('/api/bots/:id/state', (req, res) => {
@@ -262,19 +348,17 @@ app.get('/api/bots/:id/state', (req, res) => {
 app.listen(PORT, async () => {
     console.log(`[Backend] Running on http://localhost:${PORT}`);
 
-    // If a PUBLIC_BASE_URL is manually provided, use it
     if (process.env.PUBLIC_BASE_URL) {
         publicBaseUrl = process.env.PUBLIC_BASE_URL;
         console.log(`[Backend] Using PUBLIC_BASE_URL: ${publicBaseUrl}`);
         return;
     }
 
-    // Otherwise, create a localtunnel
     console.log('[Backend] Starting localtunnel...');
 
     const tunnel = await localtunnel({
         port: PORT,
-        subdomain: undefined, // random free subdomain
+        subdomain: undefined,
     });
 
     publicBaseUrl = tunnel.url;
@@ -286,6 +370,8 @@ app.listen(PORT, async () => {
         console.log('[Backend] LocalTunnel closed');
     });
 });
+
+
 
 
 

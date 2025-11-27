@@ -1,3 +1,4 @@
+// src/WordSharePie.jsx
 import {
     PieChart,
     Pie,
@@ -16,6 +17,30 @@ const COLORS = [
     '#6366f1',
     '#14b8a6',
 ];
+
+function WordShareTooltip({ active, payload }) {
+    if (!active || !payload || !payload.length) return null;
+
+    const { name, value } = payload[0];
+
+    return (
+        <div
+            style={{
+                background: '#020617',
+                border: '1px solid rgba(148,163,184,0.6)',
+                borderRadius: 12,
+                padding: '8px 10px',
+                color: '#e5e7eb',
+                fontSize: 13,
+                boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                maxWidth: 260,
+            }}
+        >
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>{name}</div>
+            <div style={{ opacity: 0.9 }}>{value} words</div>
+        </div>
+    );
+}
 
 export default function WordSharePie({ data }) {
     if (!data || data.length === 0) {
@@ -46,14 +71,11 @@ export default function WordSharePie({ data }) {
                             />
                         ))}
                     </Pie>
+
+                    {/* Custom tooltip with light text */}
                     <Tooltip
-                        contentStyle={{
-                            background: '#020617',
-                            border: '1px solid rgba(148,163,184,0.6)',
-                            borderRadius: 8,
-                            fontSize: 12,
-                        }}
-                        formatter={(value, name) => [`${value} words`, name]}
+                        content={<WordShareTooltip />}
+                        cursor={{ stroke: 'rgba(148,163,184,0.3)', strokeWidth: 1 }}
                     />
                 </PieChart>
             </ResponsiveContainer>

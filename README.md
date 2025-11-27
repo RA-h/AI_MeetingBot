@@ -1,2 +1,5 @@
-💡 If you don’t have the ngrok token yet, get it free here:
-https://dashboard.ngrok.com/get-started/your-authtoken
+To run:
+
+Open 2 terminals:
+    1) cd backend --> npm install (once) --> npm start
+    2) cd frontend --> npm install (once) --> npm run dev

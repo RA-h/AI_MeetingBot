@@ -1013,5 +1013,6 @@ backend/.env
 /backend/node_modules/yargs-parser/package.json
 /backend/node_modules/yargs-parser/README.md
 /backend/node_modules/.package-lock.json
+/backend/package-lock.json
 /frontend/package-lock.json
 /.idea/
