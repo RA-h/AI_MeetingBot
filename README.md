@@ -1,7 +1,5 @@
 # Inclusive AI Meeting Bot
 
----
-
 ## To run:
 
 1. Set keys in .env (your actual API Keys)
