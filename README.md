@@ -1,4 +1,7 @@
-To run:
+# Inlcsuive AI Meeting Bot
+
+
+## To run:
 
 Set keys in .env (your actual API Keys)
     - an example format is shown in .env.example 
