@@ -1,5 +1,4 @@
-# Inlcsuive AI Meeting Bot
-
+# Inclusive AI Meeting Bot
 
 ## To run:
 
