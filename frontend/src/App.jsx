@@ -3,6 +3,16 @@ import { useEffect, useMemo, useState } from 'react';
 import WordSharePie from './WordSharePie';
 
 const API_BASE = 'http://localhost:8000';
+const PIE_COLORS = [
+    '#7a5af8',
+    '#9b8cff',
+    '#5fc4e8',
+    '#8aa0d6',
+    '#b7c5f5',
+    '#cbd5f5',
+    '#6f86d6',
+    '#91a3ee',
+];
 
 function statusInfo(status) {
     if (!status || status === 'created') {
@@ -149,6 +159,13 @@ export default function App() {
         [transcripts],
     );
     const pieData = useMemo(() => buildPieData(wordCounts), [wordCounts]);
+    const speakerColors = useMemo(() => {
+        const map = {};
+        pieData.forEach((d, idx) => {
+            map[d.name] = PIE_COLORS[idx % PIE_COLORS.length];
+        });
+        return map;
+    }, [pieData]);
 
     async function handleCreateBot(e) {
         e?.preventDefault();
@@ -360,6 +377,7 @@ export default function App() {
                     statusMeta={statusMeta}
                     wordCounts={wordCounts}
                     pieData={pieData}
+                    speakerColors={speakerColors}
                     onBack={() => setView('live')}
                 />
                 {coachHint && (
@@ -377,15 +395,15 @@ export default function App() {
         <div className="app-shell">
             <header className="app-header">
                 <div className="app-title">
-                    <h1>Meeting AI Bot Console</h1>
-                    <span>
-                        Create a Recall bot, join a Zoom/Meet/Teams meeting, and watch
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Icon name="bolt" size={20} />
+                        <h1 style={{ margin: 0 }}>Meeting AI Console</h1>
+                    </div>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="wave" size={16} />
+                        Create a bot, join a Zoom/Meet/Teams meeting, and watch
                         participants + transcripts in real time.
                     </span>
-                </div>
-                <div className="badge">
-                    <span className="badge-dot" />
-                    Backend: localhost:8000
                 </div>
             </header>
 
@@ -393,10 +411,9 @@ export default function App() {
             <section className="card">
                 <div className="card-header">
                     <div>
-                        <h2>Bot control</h2>
+                        <h2>Meeting Link</h2>
                         <span>Paste a Zoom/Meet/Teams link to spawn a bot.</span>
                     </div>
-                    <BotStatusPill label={statusMeta.label} tone={statusMeta.tone} />
                 </div>
 
                 <form
@@ -410,6 +427,14 @@ export default function App() {
                             placeholder="https://us04web.zoom.us/j/..."
                             value={meetingUrl}
                             onChange={(e) => setMeetingUrl(e.target.value)}
+                            style={{
+                                borderRadius: 14,
+                                padding: '12px 14px',
+                                border: '1px solid rgba(229, 232, 242, 0.9)',
+                                background: 'rgba(255,255,255,0.72)',
+                                backdropFilter: 'blur(8px)',
+                                boxShadow: '0 6px 14px rgba(15,23,42,0.06)',
+                            }}
                         />
                         <button
                             className="button"
@@ -417,32 +442,19 @@ export default function App() {
                             disabled={creating || !meetingUrl.trim()}
                             style={botId ? { display: 'none' } : undefined}
                         >
+                            <Icon name="link" />
                             {creating ? 'Creating…' : botId ? 'Create new bot' : 'Create bot'}
                         </button>
                         {botId && (
                             <button
                                 type="button"
-                                className="button button-secondary"
+                                className="button"
                                 onClick={handleEndBot}
                             >
+                                <Icon name="stop" />
                                 End bot &amp; show summary
                             </button>
                         )}
-                    </div>
-
-                    <div className="bot-meta">
-                        <span>
-                            Bot ID: <code>{botId || '— not created yet —'}</code>
-                        </span>
-                        <span>
-                            Status: <code>{statusMeta.label}</code>
-                        </span>
-                        <span>
-                            Transcripts: <code>{transcripts.length}</code>
-                        </span>
-                        <span>
-                            Participants: <code>{participantsList.length}</code>
-                        </span>
                     </div>
 
                     <div
@@ -451,41 +463,28 @@ export default function App() {
                             fontSize: 12,
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 8,
+                            gap: 12,
                             flexWrap: 'wrap',
                         }}
                     >
-                        <label
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                cursor: 'pointer',
-                            }}
-                        >
-                            <input
-                                type="checkbox"
-                                checked={coachEnabled}
-                                onChange={(e) => setCoachEnabled(e.target.checked)}
-                            />
-                            <span>Enable live participation coach</span>
-                        </label>
+                        <div className="toggle-chip">
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={coachEnabled}
+                                    onChange={(e) => setCoachEnabled(e.target.checked)}
+                                />
+                                <span>Enable live participation coach</span>
+                            </label>
+                        </div>
 
                         <button
                             type="button"
                             onClick={handleAskCoachNow}
-                            // while debugging, keep it always enabled except when busy
+                            className="button"
                             disabled={coachBusy}
-                            style={{
-                                fontSize: 11,
-                                padding: '4px 10px',
-                                borderRadius: 999,
-                                border: 'none',
-                                background: 'rgba(59,130,246,0.2)',
-                                color: '#e5e7eb',
-                                cursor: 'pointer',
-                            }}
                         >
+                            <Icon name="chat" />
                             Ask coach now
                         </button>
 
@@ -512,7 +511,10 @@ export default function App() {
                 <section className="card">
                     <div className="card-header">
                         <div>
-                            <h2>Transcript</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Icon name="mic" size={20} />
+                                <h2>Transcript</h2>
+                            </div>
                             <span>
                                 Finalized utterances below. Partial line shows what&apos;s being
                                 spoken right now.
@@ -572,8 +574,10 @@ export default function App() {
                 <section className="card">
                     <div className="card-header">
                         <div>
-                            <h2>Participants</h2>
-                            <span>Updated from participant_events.* in real time.</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Icon name="people" size={20} />
+                                <h2>Participants</h2>
+                            </div>
                         </div>
                         <span className="badge-small">
                             {participantsList.length} seen
@@ -601,7 +605,7 @@ export default function App() {
                                     </div>
                                     <div className="wordshare-chart">
                                         {pieData.length > 0 ? (
-                                            <WordSharePie data={pieData} />
+                                        <WordSharePie data={pieData} colorMap={speakerColors} />
                                         ) : (
                                             <div style={{ opacity: 0.6, fontSize: 12 }}>
                                                 No words counted yet.
@@ -617,6 +621,15 @@ export default function App() {
                                     />
                                 )}
 
+                                {participation && (
+                                <SpeakingTimeRatio
+                                    participation={participation}
+                                    title="Speaking-time ratio"
+                                    caption="Share of total words in the current call."
+                                    colorMap={speakerColors}
+                                />
+                                )}
+
                                 {participantsList.map((p) => (
                                     <ParticipantRow key={p.id} p={p} />
                                 ))}
@@ -625,16 +638,6 @@ export default function App() {
                     </div>
                 </section>
             </main>
-
-            <footer className="footer">
-                <span>
-                    Polling bot state every {pollIntervalMs / 1000}s from{' '}
-                    <code>GET /api/bots/:id/state</code>.
-                </span>
-                <span style={{ textAlign: 'right' }}>
-                    Webhook: <code>{'<PUBLIC_URL>/api/recall/webhook'}</code>
-                </span>
-            </footer>
 
             {coachHint && (
                 <CoachToast
@@ -647,6 +650,92 @@ export default function App() {
 }
 
 /* ---------- Small helper components ---------- */
+
+function Icon({ name, size = 18, color = 'currentColor' }) {
+    const common = {
+        width: size,
+        height: size,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: color,
+        strokeWidth: 1.8,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+    };
+
+    switch (name) {
+        case 'bolt':
+            return (
+                <svg {...common} fill={color}>
+                    <path d="M13 2 5 13h5l-1 9 8-11h-5l1-9z" />
+                </svg>
+            );
+        case 'wave':
+            return (
+                <svg {...common}>
+                    <path d="M3 12c2.2 0 2.2-6 4.4-6S9.6 12 12 12s2.4-6 4.6-6S19.8 12 22 12" />
+                </svg>
+            );
+        case 'link':
+            return (
+                <svg {...common}>
+                    <path d="M10 14a5 5 0 0 1 0-7l1.5-1.5a4 4 0 0 1 5.7 5.6L16 12" />
+                    <path d="M14 10a5 5 0 0 1 0 7l-1.5 1.5a4 4 0 1 1-5.7-5.6L8 12" />
+                </svg>
+            );
+        case 'stop':
+            return (
+                <svg {...common} fill="none">
+                    <rect x="6" y="6" width="12" height="12" rx="3" />
+                </svg>
+            );
+        case 'chat':
+            return (
+                <svg {...common}>
+                    <path d="M5 16v3l3-3h9a3 3 0 0 0 3-3V8a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v5a3 3 0 0 0 3 3z" />
+                </svg>
+            );
+        case 'mic':
+            return (
+                <svg {...common}>
+                    <rect x="9" y="4" width="6" height="10" rx="3" />
+                    <path d="M5 10a7 7 0 0 0 14 0" />
+                    <path d="M12 17v3" />
+                </svg>
+            );
+        case 'people':
+            return (
+                <svg {...common}>
+                    <circle cx="8" cy="9" r="3" />
+                    <circle cx="17" cy="9" r="3" />
+                    <path d="M4 19c0-2.2 1.8-4 4-4h0c2.2 0 4 1.8 4 4" />
+                    <path d="M13 19c0-1.9 1.6-3.5 3.5-3.5H17c1.9 0 3.5 1.6 3.5 3.5" />
+                </svg>
+            );
+        case 'pie':
+            return (
+                <svg {...common} fill={color}>
+                    <path d="M12 3a9 9 0 1 0 9 9h-9z" opacity="0.2" />
+                    <path d="M12 3v9l7.8 2" />
+                    <circle cx="12" cy="12" r="9" />
+                </svg>
+            );
+        case 'doc':
+            return (
+                <svg {...common}>
+                    <path d="M7 3h7l4 4v11a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z" />
+                    <path d="M14 3v4h4" />
+                    <path d="M9 13h6M9 17h4M9 9h2" />
+                </svg>
+            );
+        default:
+            return (
+                <svg {...common}>
+                    <circle cx="12" cy="12" r="9" />
+                </svg>
+            );
+    }
+}
 
 function BotStatusPill({ label, tone }) {
     const cls =
@@ -707,17 +796,130 @@ function SummarySectionCard({ title, children }) {
         <div
             style={{
                 borderRadius: 10,
-                border: '1px solid rgba(148,163,184,0.35)',
-                padding: 10,
+                border: '1px solid #e5e8f2',
+                padding: 12,
                 marginTop: 8,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 4,
-                background: '#020617',
+                background: '#ffffff',
             }}
         >
             <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
             <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{children}</div>
+        </div>
+    );
+}
+
+/* ---------- Speaking time ratio (shared between live + summary) ---------- */
+
+function SpeakingTimeRatio({ participation, title, caption, colorMap }) {
+    if (!participation || !participation.speakingShare) return null;
+
+    const entries = Object.entries(participation.speakingShare || {})
+        .map(([name, share]) => ({
+            name,
+            share: Number.isFinite(share) ? share : 0,
+        }))
+        .filter(({ share }) => share > 0)
+        .sort((a, b) => b.share - a.share);
+
+    if (!entries.length) return null;
+
+    const domName =
+        participation.dominantSpeaker || participation.window?.dominantSpeaker || null;
+    const domShare = Number.isFinite(participation.dominantShare)
+        ? participation.dominantShare
+        : Number.isFinite(participation.window?.dominantShare)
+        ? participation.window.dominantShare
+        : null;
+    const under = Array.isArray(participation.underrepresented)
+        ? participation.underrepresented
+        : [];
+
+    return (
+        <div
+            style={{
+                marginTop: 12,
+                padding: 14,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.65)',
+                border: '1px solid rgba(255,255,255,0.35)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                boxShadow: '0 16px 32px rgba(15,23,42,0.08)',
+                backdropFilter: 'blur(10px)',
+            }}
+        >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{title}</div>
+                {caption && <div style={{ fontSize: 12, color: '#6b7280' }}>{caption}</div>}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {entries.map(({ name, share }) => {
+                    const barColor = colorMap?.[name] || '#7a5af8';
+                    return (
+                    <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                fontSize: 12,
+                            }}
+                        >
+                            <span>{name}</span>
+                            <span style={{ color: '#6b7280' }}>{(share * 100).toFixed(0)}%</span>
+                        </div>
+                        <div
+                            style={{
+                                height: 10,
+                                borderRadius: 999,
+                                background: '#eef1f8',
+                                overflow: 'hidden',
+                            }}
+                        >
+                            <div
+                                style={{
+                                    width: `${Math.max(0, Math.min(share, 1)) * 100}%`,
+                                    height: '100%',
+                                    background: barColor,
+                                }}
+                            />
+                        </div>
+                    </div>
+                )})}
+            </div>
+
+            <div style={{ fontSize: 12, color: '#475569' }}>
+                {domName ? (
+                    <>
+                        Dominant speaker: <strong>{domName}</strong>
+                        {domShare !== null && (
+                            <> ({(domShare * 100).toFixed(0)}% of recent words)</>
+                        )}
+                    </>
+                ) : (
+                    'No dominant speaker detected yet.'
+                )}
+            </div>
+
+            {under.length > 0 && (
+                <div style={{ fontSize: 12, color: '#475569' }}>
+                    Underrepresented:{' '}
+                    {under
+                        .map((u) =>
+                            typeof u === 'string'
+                                ? u
+                                : `${u.name || 'Unknown'}${
+                                      Number.isFinite(u.share) ? ` (${(u.share * 100).toFixed(0)}%)` : ''
+                                  }`
+                        )
+                        .join(', ')}
+                </div>
+            )}
         </div>
     );
 }
@@ -729,41 +931,42 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
 
     const {
         totalWords,
-        totalTurns,
-        speakingShare = {},
         dominantSpeaker,
         dominantShare,
         underrepresented = [],
-        transitions,
         interruptions,
         longestSilence = {},
-        window = {},
-        durationSec,
     } = participation;
 
-    const recentDom = window.dominantSpeaker;
-    const recentShare = window.dominantShare;
+    const totalInterruptions = Number.isFinite(interruptions) ? interruptions : 0;
+    const topInterrupter = participation.topInterrupter || null;
+    const topInterruptionCount = Number.isFinite(participation.topInterruptionCount)
+        ? participation.topInterruptionCount
+        : null;
+    const repetitionSummary = participation.repetitionSummary || {};
 
     const title =
         mode === 'live'
             ? 'Live participation diagnostics'
-            : 'Participation diagnostics (full call)';
+            : 'Participation diagnostics';
 
     return (
         <div
             style={{
                 marginTop: 12,
-                padding: 12,
-                borderRadius: 10,
-                background: '#020617',
-                border: '1px dashed rgba(148,163,184,0.4)',
+                padding: 14,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.65)',
+                border: '1px solid rgba(255,255,255,0.35)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 4,
                 fontSize: 12,
+                boxShadow: '0 16px 32px rgba(15,23,42,0.08)',
+                backdropFilter: 'blur(10px)',
             }}
         >
-            <div style={{ fontWeight: 600, fontSize: 13 }}>{title}</div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{title}</div>
 
             {dominantSpeaker && dominantShare > 0 ? (
                 <div>
@@ -840,11 +1043,19 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
 
 /* ---------- Summary View "page" ---------- */
 
-function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack }) {
+function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
     const transcripts = botState.transcripts || [];
     const participantsList = Object.values(botState.participants || {}).sort(
         (a, b) => (a.name || '').localeCompare(b.name || ''),
     );
+    const participation = botState.participation || null;
+    const speakerColors = useMemo(() => {
+        const map = {};
+        pieData.forEach((d, idx) => {
+            map[d.name] = PIE_COLORS[idx % PIE_COLORS.length];
+        });
+        return map;
+    }, [pieData]);
 
     // AI summary local state
     const [summaryText, setSummaryText] = useState(botState.summary?.text || '');
@@ -915,9 +1126,9 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                     </span>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <BotStatusPill label={statusMeta.label} tone={statusMeta.tone} />
+                    
                     <button className="button button-secondary" onClick={onBack}>
-                        ← Back to console
+                        Back to console
                     </button>
                 </div>
             </header>
@@ -927,7 +1138,10 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                 <section className="card">
                     <div className="card-header">
                         <div>
-                            <h2>Final transcript</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Icon name="mic" size={20} />
+                                <h2>Final transcript</h2>
+                            </div>
                             <span>
                                 All finalized utterances captured while the bot was in the call.
                             </span>
@@ -977,7 +1191,10 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                 <section className="card">
                     <div className="card-header">
                         <div>
-                            <h2>Speaking analytics</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Icon name="pie" size={20} />
+                                <h2>Speaking analytics</h2>
+                            </div>
                             <span>Word counts, participation, and summary.</span>
                         </div>
                     </div>
@@ -988,7 +1205,7 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                         </div>
                         <div className="wordshare-chart">
                             {pieData.length > 0 ? (
-                                <WordSharePie data={pieData} />
+                                <WordSharePie data={pieData} colorMap={speakerColors} />
                             ) : (
                                 <div style={{ opacity: 0.6, fontSize: 12 }}>
                                     No words counted yet.
@@ -1016,6 +1233,15 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                         )}
                     </div>
 
+                    {participation && (
+                        <SpeakingTimeRatio
+                            participation={participation}
+                            title="Speaking-time ratio"
+                            caption="Share of total words across the full call."
+                            colorMap={speakerColors}
+                        />
+                    )}
+
                     {botState.participation && (
                         <ParticipationDiagnostics
                             participation={botState.participation}
@@ -1026,17 +1252,18 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                     <div
                         style={{
                             marginTop: 16,
-                            padding: 12,
-                            borderRadius: 10,
-                            background: '#111318',
-                            border: '1px dashed rgba(255,255,255,0.12)',
+                            padding: 14,
+                            borderRadius: 12,
+                            background: '#ffffff',
+                            border: '1px solid #e5e8f2',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 6,
+                            boxShadow: '0 12px 28px rgba(15,23,42,0.08)',
                         }}
                     >
                         <div style={{ fontSize: 14, fontWeight: 600 }}>AI summary</div>
-                        <div style={{ fontSize: 12, opacity: 0.8 }}>
+                        <div style={{ fontSize: 12, color: '#475569' }}>
                             This summary is generated using the full transcript and
                             participation signals (dominance, silence, underrepresentation,
                             interruptions). It is structured into sections for faster review.
@@ -1049,6 +1276,7 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                             disabled={summaryLoading}
                             style={{ marginTop: 4, alignSelf: 'flex-start' }}
                         >
+                            <Icon name="doc" />
                             {summaryLoading ? 'Generating…' : 'Generate / refresh summary'}
                         </button>
 
@@ -1157,13 +1385,6 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                     </div>
                 </section>
             </main>
-
-            {coachHint && (
-                <CoachToast
-                    message={coachHint}
-                    onClose={() => setCoachHint('')}
-                />
-            )}
         </div>
     );
 }
@@ -1174,16 +1395,20 @@ function CoachToast({ message, onClose }) {
     return (
         <div
             style={{
-                position: 'fixed',
+                position: 'sticky',
                 right: 16,
                 bottom: 16,
                 maxWidth: 320,
-                background: '#0b1120',
-                borderRadius: 10,
-                padding: 12,
-                boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
-                border: '1px solid rgba(248,250,252,0.1)',
+                background: 'rgba(255,255,255,0.82)',
+                borderRadius: 12,
+                padding: 14,
+                boxShadow: '0 18px 36px rgba(15,23,42,0.16)',
+                border: '1px solid rgba(229,232,242,0.9)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                fontFamily: 'Ubuntu, Segoe UI, system-ui, sans-serif',
                 zIndex: 9999,
+                top: 'auto',
             }}
         >
             <div
@@ -1191,13 +1416,16 @@ function CoachToast({ message, onClose }) {
                     fontSize: 11,
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
-                    opacity: 0.7,
+                    color: '#334155',
                     marginBottom: 4,
+                    fontWeight: 600,
                 }}
             >
                 Participation coach
             </div>
-            <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{message}</div>
+            <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: '#0f172a' }}>
+                {message}
+            </div>
             <div
                 style={{
                     display: 'flex',
@@ -1205,22 +1433,33 @@ function CoachToast({ message, onClose }) {
                     gap: 8,
                     marginTop: 4,
                 }}
-            >
-                <button
-                    type="button"
-                    onClick={onClose}
-                    style={{
-                        fontSize: 11,
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        border: 'none',
-                        background: 'rgba(148,163,184,0.25)',
-                        color: '#e5e7eb',
-                        cursor: 'pointer',
-                    }}
                 >
-                    Dismiss
-                </button>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                            fontSize: 11,
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(229,232,242,0.9)',
+                            background: 'rgba(247,248,253,0.9)',
+                            color: '#334155',
+                            cursor: 'pointer',
+                            boxShadow: '0 10px 20px rgba(15,23,42,0.08)',
+                        }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#7a5af8';
+                            e.currentTarget.style.color = '#ffffff';
+                            e.currentTarget.style.border = '1px solid #7a5af8';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(247,248,253,0.9)';
+                            e.currentTarget.style.color = '#334155';
+                            e.currentTarget.style.border = '1px solid rgba(229,232,242,0.9)';
+                        }}
+                    >
+                        Dismiss
+                    </button>
             </div>
         </div>
     );

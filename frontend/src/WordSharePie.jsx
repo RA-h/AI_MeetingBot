@@ -8,14 +8,14 @@ import {
 } from 'recharts';
 
 const COLORS = [
-    '#38bdf8',
-    '#a855f7',
-    '#f97316',
-    '#22c55e',
-    '#e11d48',
-    '#facc15',
-    '#6366f1',
-    '#14b8a6',
+    '#7a5af8',
+    '#9b8cff',
+    '#5fc4e8',
+    '#8aa0d6',
+    '#b7c5f5',
+    '#cbd5f5',
+    '#6f86d6',
+    '#91a3ee',
 ];
 
 function WordShareTooltip({ active, payload }) {
@@ -26,23 +26,24 @@ function WordShareTooltip({ active, payload }) {
     return (
         <div
             style={{
-                background: '#020617',
-                border: '1px solid rgba(148,163,184,0.6)',
+                background: 'rgba(255,255,255,0.82)',
+                border: '1px solid rgba(229,232,242,0.9)',
                 borderRadius: 12,
                 padding: '8px 10px',
-                color: '#e5e7eb',
+                color: '#0f172a',
                 fontSize: 13,
-                boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                boxShadow: '0 18px 36px rgba(15,23,42,0.16)',
                 maxWidth: 260,
+                backdropFilter: 'blur(12px)',
             }}
         >
             <div style={{ fontWeight: 600, marginBottom: 2 }}>{name}</div>
-            <div style={{ opacity: 0.9 }}>{value} words</div>
+            <div style={{ opacity: 0.75 }}>{value} words</div>
         </div>
     );
 }
 
-export default function WordSharePie({ data }) {
+export default function WordSharePie({ data, colorMap }) {
     if (!data || data.length === 0) {
         return (
             <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -67,7 +68,7 @@ export default function WordSharePie({ data }) {
                         {data.map((entry, idx) => (
                             <Cell
                                 key={entry.name}
-                                fill={COLORS[idx % COLORS.length]}
+                                fill={colorMap?.[entry.name] || COLORS[idx % COLORS.length]}
                             />
                         ))}
                     </Pie>
