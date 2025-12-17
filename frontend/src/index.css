@@ -341,6 +341,10 @@ body {
   gap: 8px;
   font-size: 13px;
 }
+.layout-main--summary .transcript-list {
+  min-height: 0;
+  max-height: none;
+}
 
 .transcript-item {
   padding-bottom: 8px;
@@ -485,4 +489,94 @@ body {
 .wordshare-chart:focus,
 .wordshare-chart *:focus {
   outline: none;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.summary-card {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(247,248,255,0.82));
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.summary-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-card-heading h2 {
+  margin: 0;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary-card-heading span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  background: rgba(122, 90, 248, 0.08);
+  color: #6f4ef6;
+}
+
+.summary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary-section-card {
+  border-radius: 12px;
+  border: 1px solid #e5e8f2;
+  background: rgba(255,255,255,0.9);
+  box-shadow: 0 8px 20px rgba(15,23,42,0.06);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.summary-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid rgba(122, 90, 248, 0.35);
+}
+
+.summary-section-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #0f172a;
 }

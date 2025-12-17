@@ -1,4 +1,4 @@
-// frontend/src/App.jsx
+﻿// frontend/src/App.jsx
 import { useEffect, useMemo, useState } from 'react';
 import WordSharePie from './WordSharePie';
 
@@ -13,6 +13,7 @@ const PIE_COLORS = [
     '#6f86d6',
     '#91a3ee',
 ];
+const EMPTY_TRANSCRIPTS = [];
 
 function statusInfo(status) {
     if (!status || status === 'created') {
@@ -26,7 +27,7 @@ function statusInfo(status) {
         return { label: 'Recording', tone: 'active' };
     }
     if (status === 'joining_call' || status === 'joining_meeting' || status === 'starting') {
-        return { label: 'Joining…', tone: 'idle' };
+        return { label: 'Joiningâ€¦', tone: 'idle' };
     }
     if (status === 'ended' || status === 'finished' || status === 'call_ended') {
         return { label: 'Finished', tone: 'finished' };
@@ -150,7 +151,7 @@ export default function App() {
         );
     }, [botState]);
 
-    const transcripts = botState?.transcripts || [];
+    const transcripts = botState?.transcripts ?? EMPTY_TRANSCRIPTS;
     const partialTranscript = botState?.partialTranscript || '';
     const participation = botState?.participation || null;
 
@@ -248,7 +249,7 @@ export default function App() {
 
         try {
             setCoachBusy(true);
-            console.log('[AskCoach] calling /api/bots/' + botId + '/coach …');
+            console.log('[AskCoach] calling /api/bots/' + botId + '/coach â€¦');
 
             const res = await fetch(`${API_BASE}/api/bots/${botId}/coach`, {
                 method: 'POST',
@@ -443,7 +444,7 @@ export default function App() {
                             style={botId ? { display: 'none' } : undefined}
                         >
                             <Icon name="link" />
-                            {creating ? 'Creating…' : botId ? 'Create new bot' : 'Create bot'}
+                            {creating ? 'Creatingâ€¦' : botId ? 'Create new bot' : 'Create bot'}
                         </button>
                         {botId && (
                             <button
@@ -527,7 +528,7 @@ export default function App() {
                         {(!botId || (!transcripts.length && !partialTranscript)) && (
                             <div style={{opacity: 0.6, fontSize: 13}}>
                                 {botId
-                                    ? 'Waiting for the bot to hear some audio…'
+                                    ? 'Waiting for the bot to hear some audio.'
                                     : 'Create a bot and start talking in the meeting.'}
                             </div>
                         )}
@@ -781,7 +782,7 @@ function ParticipantRow({ p }) {
                     {!inCall && <span className="participant-badge">Left</span>}
                 </div>
                 <div className="participant-sub">
-                    {p.email ? p.email + ' · ' : ''}
+                    {p.email ? p.email + ' Â· ' : ''}
                     {inCall ? 'In call' : 'Not in call'}
                 </div>
             </div>
@@ -792,21 +793,76 @@ function ParticipantRow({ p }) {
 }
 
 function SummarySectionCard({ title, children }) {
+    // Render plain text into paragraphs and bullet lists for better readability.
+    function renderContent(text) {
+        const lines = String(text || '').split(/\r?\n/);
+        const parts = [];
+        let bullets = [];
+        let key = 0;
+
+        const flushBullets = () => {
+            if (!bullets.length) return;
+            parts.push(
+                <ul
+                    key={`ul-${key++}`}
+                    style={{
+                        margin: '0 0 6px 14px',
+                        padding: 0,
+                        lineHeight: 1.5,
+                        color: '#0f172a',
+                    }}
+                >
+                    {bullets.map((b, i) => (
+                        <li key={`li-${i}`} style={{ marginBottom: 4 }}>
+                            {b}
+                        </li>
+                    ))}
+                </ul>,
+            );
+            bullets = [];
+        };
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                flushBullets();
+                continue;
+            }
+
+            const bulletMatch = /^[-â€¢]\s*(.+)$/.exec(trimmed);
+            if (bulletMatch) {
+                bullets.push(bulletMatch[1]);
+                continue;
+            }
+
+            flushBullets();
+            parts.push(
+                <div
+                    key={`p-${key++}`}
+                    style={{
+                        margin: '0 0 6px 0',
+                        lineHeight: 1.5,
+                        color: '#0f172a',
+                    }}
+                >
+                    {trimmed}
+                </div>,
+            );
+        }
+
+        flushBullets();
+        return parts;
+    }
+
+    const content =
+        typeof children === 'string' || typeof children === 'number'
+            ? renderContent(children)
+            : children;
+
     return (
-        <div
-            style={{
-                borderRadius: 10,
-                border: '1px solid #e5e8f2',
-                padding: 12,
-                marginTop: 8,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                background: '#ffffff',
-            }}
-        >
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
-            <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{children}</div>
+        <div className="summary-section-card">
+            <div className="summary-section-title">{title}</div>
+            <div className="summary-section-body">{content}</div>
         </div>
     );
 }
@@ -853,7 +909,7 @@ function SpeakingTimeRatio({ participation, title, caption, colorMap }) {
             }}
         >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{title}</div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
                 {caption && <div style={{ fontSize: 12, color: '#6b7280' }}>{caption}</div>}
             </div>
 
@@ -966,7 +1022,7 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 backdropFilter: 'blur(10px)',
             }}
         >
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{title}</div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{title}</div>
 
             {dominantSpeaker && dominantShare > 0 ? (
                 <div>
@@ -976,7 +1032,7 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 </div>
             ) : (
                 <div>
-                    <strong>Dominant speaker (last few turns):</strong> –
+                    <strong>Dominant speaker (last few turns):</strong> â€“
                 </div>
             )}
 
@@ -1001,7 +1057,7 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 {topInterrupter && (
                     <>
                         {' '}
-                        — mostly by {topInterrupter} (×{topInterruptionCount})
+                        â€” mostly by {topInterrupter} (Ã—{topInterruptionCount})
                     </>
                 )}
             </div>
@@ -1026,9 +1082,9 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                         .map(([name, info]) => {
                             const phrase =
                                 (info.phrase || '').length > 40
-                                    ? `${info.phrase.slice(0, 40)}…`
+                                    ? `${info.phrase.slice(0, 40)}â€¦`
                                     : info.phrase || '(short utterance)';
-                            return `${name} keeps repeating “${phrase}” (×${info.count})`;
+                            return `${name} keeps repeating â€œ${phrase}â€ (Ã—${info.count})`;
                         })
                         .join('; ')}
                 </div>
@@ -1045,9 +1101,6 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
 
 function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
     const transcripts = botState.transcripts || [];
-    const participantsList = Object.values(botState.participants || {}).sort(
-        (a, b) => (a.name || '').localeCompare(b.name || ''),
-    );
     const participation = botState.participation || null;
     const speakerColors = useMemo(() => {
         const map = {};
@@ -1089,7 +1142,6 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                 return;
             }
 
-            // Backend returns { text, createdAt, model }
             const newText =
                 typeof data.text === 'string'
                     ? data.text
@@ -1126,8 +1178,7 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                     </span>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    
-                    <button className="button button-secondary" onClick={onBack}>
+                    <button className="button" onClick={onBack} style={{ alignSelf: 'flex-end' }}>
                         Back to console
                     </button>
                 </div>
@@ -1187,7 +1238,7 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                     </div>
                 </section>
 
-                {/* Right: analytics + AI summary */}
+                {/* Right: analytics */}
                 <section className="card">
                     <div className="card-header">
                         <div>
@@ -1195,7 +1246,7 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                                 <Icon name="pie" size={20} />
                                 <h2>Speaking analytics</h2>
                             </div>
-                            <span>Word counts, participation, and summary.</span>
+                            <span>Word counts and participation signals.</span>
                         </div>
                     </div>
 
@@ -1248,156 +1299,135 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                             mode="summary"
                         />
                     )}
+                </section>
+            </main>
 
-                    <div
-                        style={{
-                            marginTop: 16,
-                            padding: 14,
-                            borderRadius: 12,
-                            background: '#ffffff',
-                            border: '1px solid #e5e8f2',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 6,
-                            boxShadow: '0 12px 28px rgba(15,23,42,0.08)',
-                        }}
-                    >
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>AI summary</div>
-                        <div style={{ fontSize: 12, color: '#475569' }}>
-                            This summary is generated using the full transcript and
-                            participation signals (dominance, silence, underrepresentation,
-                            interruptions). It is structured into sections for faster review.
-                        </div>
-
+            {/* AI summary card */}
+            <section className="summary-card">
+                <div className="summary-card-header">
+                    <div className="summary-card-heading">
+                        <h2>
+                            <Icon name="doc" size={20} />
+                            AI summary
+                        </h2>
+                        <span>
+                            Generated from the full transcript and participation signals for quick review.
+                        </span>
+                    </div>
+                    <div className="summary-actions">
+                        <span className="summary-badge">
+                            {summaryLoading
+                                ? 'Refreshing…'
+                                : summaryText
+                                ? 'Up to date'
+                                : 'Needs summary'}
+                        </span>
                         <button
                             className="button"
                             type="button"
                             onClick={handleGenerateSummary}
                             disabled={summaryLoading}
-                            style={{ marginTop: 4, alignSelf: 'flex-start' }}
                         >
                             <Icon name="doc" />
-                            {summaryLoading ? 'Generating…' : 'Generate / refresh summary'}
+                            {summaryLoading ? 'Generating ...' : 'Generate / refresh summary'}
                         </button>
+                    </div>
+                </div>
 
-                        {summaryError && (
+                {summaryError && (
+                    <div
+                        style={{
+                            marginTop: 4,
+                            fontSize: 12,
+                            color: '#fecaca',
+                        }}
+                    >
+                        {summaryError}
+                    </div>
+                )}
+
+                {summaryText && (
+                    <div style={{ marginTop: 4 }}>
+                        {summaryFinishReason === 'length' && (
                             <div
                                 style={{
-                                    marginTop: 4,
-                                    fontSize: 12,
-                                    color: '#fecaca',
+                                    fontSize: 11,
+                                    color: '#fde68a',
+                                    marginBottom: 6,
                                 }}
                             >
-                                {summaryError}
+                                Note: The AI stopped early because it hit the length
+                                limit; content may be truncated.
                             </div>
                         )}
 
-                        {summaryText && (
-                            <div style={{ marginTop: 8 }}>
-                                {summaryFinishReason === 'length' && (
-                                    <div
-                                        style={{
-                                            fontSize: 11,
-                                            color: '#fde68a',
-                                            marginBottom: 6,
-                                        }}
-                                    >
-                                        Note: The AI stopped early because it hit the length
-                                        limit; content may be truncated.
-                                    </div>
+                        {hasStructuredSections && (
+                            <div className="summary-grid">
+                                {sections.overview && (
+                                    <SummarySectionCard title="Overview">
+                                        {sections.overview}
+                                    </SummarySectionCard>
+                                )}
+                                {sections.decisions && (
+                                    <SummarySectionCard title="Decisions">
+                                        {sections.decisions}
+                                    </SummarySectionCard>
+                                )}
+                                {sections.actions && (
+                                    <SummarySectionCard title="Action items">
+                                        {sections.actions}
+                                    </SummarySectionCard>
+                                )}
+                                {sections.inclusivity && (
+                                    <SummarySectionCard title="Inclusivity & Engagement">
+                                        {sections.inclusivity}
+                                    </SummarySectionCard>
                                 )}
 
-                                {hasStructuredSections && (
-                                    <>
-                                        {sections.overview && (
-                                            <SummarySectionCard title="Overview">
-                                                {sections.overview}
-                                            </SummarySectionCard>
-                                        )}
-                                        {sections.decisions && (
-                                            <SummarySectionCard title="Decisions">
-                                                {sections.decisions}
-                                            </SummarySectionCard>
-                                        )}
-                                        {sections.actions && (
-                                            <SummarySectionCard title="Action items">
-                                                {sections.actions}
-                                            </SummarySectionCard>
-                                        )}
-                                        {sections.inclusivity && (
-                                            <SummarySectionCard title="Inclusivity & Engagement">
-                                                {sections.inclusivity}
-                                            </SummarySectionCard>
-                                        )}
-
-                                        {sections.other && (
-                                            <SummarySectionCard title="Other Notes">
-                                                {sections.other}
-                                            </SummarySectionCard>
-                                        )}
-                                    </>
-                                )}
-
-                                {/* Fallback if parsing fails: show raw summary */}
-                                {summaryText && !hasStructuredSections && (
-                                    <SummarySectionCard title="Summary">
-                                        {summaryText}
+                                {sections.other && (
+                                    <SummarySectionCard title="Other Notes">
+                                        {sections.other}
                                     </SummarySectionCard>
                                 )}
                             </div>
                         )}
 
-                        {!summaryText && (
-                            <div
-                                style={{
-                                    marginTop: 4,
-                                    fontSize: 12,
-                                    opacity: 0.8,
-                                }}
-                            >
-                                No summary generated yet. Click &quot;Generate / refresh
-                                summary&quot; after the call to get a structured recap.
+                        {summaryText && !hasStructuredSections && (
+                            <div className="summary-grid">
+                                <SummarySectionCard title="Summary">
+                                    {summaryText}
+                                </SummarySectionCard>
                             </div>
                         )}
                     </div>
+                )}
 
+                {!summaryText && (
                     <div
                         style={{
-                            marginTop: 12,
-                            fontSize: 11,
-                            opacity: 0.7,
+                            marginTop: 4,
+                            fontSize: 12,
+                            opacity: 0.8,
                         }}
                     >
-                        Bot ID: <code>{botId}</code>
+                        No summary generated yet. Click "Generate / refresh summary"
+                        after the call to get a structured recap.
                     </div>
-                    <div
-                        style={{
-                            fontSize: 11,
-                            opacity: 0.7,
-                        }}
-                    >
-                        Participants:{' '}
-                        <code>
-                            {participantsList.length > 0
-                                ? participantsList.map((p) => p.name).join(', ')
-                                : 'none'}
-                        </code>
-                    </div>
-                </section>
-            </main>
+                )}
+            </section>
         </div>
     );
-}
-
-/* ---------- Coach Toast ---------- */
+}/* ---------- Coach Toast ---------- */
 
 function CoachToast({ message, onClose }) {
     return (
         <div
             style={{
-                position: 'sticky',
+                position: 'fixed',
+                top: 16,
                 right: 16,
-                bottom: 16,
+                left: 'auto',
+                bottom: 'auto',
                 maxWidth: 320,
                 background: 'rgba(255,255,255,0.82)',
                 borderRadius: 12,
@@ -1408,7 +1438,6 @@ function CoachToast({ message, onClose }) {
                 WebkitBackdropFilter: 'blur(12px)',
                 fontFamily: 'Ubuntu, Segoe UI, system-ui, sans-serif',
                 zIndex: 9999,
-                top: 'auto',
             }}
         >
             <div

@@ -205,6 +205,11 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
     return null;
   }
 
+  // Repetition detection setup
+  const MIN_REPEAT_WORDS = 3;
+  const MIN_REPEAT_COUNT = 2;
+  const phraseMap = new Map(); // speaker -> Map<normalizedPhrase, { count, sample }>
+
   // Basic word counts and shares
   const wordCounts = {};
   transcripts.forEach((t) => {
@@ -246,6 +251,28 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
         (t.words && t.words[0]?.start_timestamp?.absolute) ||
         t.startSec
     );
+
+    // Track repeated phrases per speaker
+    const rawText = (t.text || "").trim();
+    if (rawText) {
+      const words = rawText.split(/\s+/).filter(Boolean);
+      if (words.length >= MIN_REPEAT_WORDS) {
+        const normalized = words
+          .map((w) => w.toLowerCase().replace(/[^a-z0-9']/gi, ""))
+          .filter(Boolean)
+          .join(" ");
+        if (normalized) {
+          const speakerMap = phraseMap.get(curSpeaker) || new Map();
+          const entry = speakerMap.get(normalized) || {
+            count: 0,
+            sample: rawText.slice(0, 120),
+          };
+          entry.count += 1;
+          speakerMap.set(normalized, entry);
+          phraseMap.set(curSpeaker, speakerMap);
+        }
+      }
+    }
 
     if (curTime !== null) {
       if (firstTime === null) firstTime = curTime;
@@ -308,6 +335,26 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
     },
     durationSec:
       firstTime !== null && lastTime !== null ? Math.max(0, lastTime - firstTime) : null,
+    repetitionSummary: (() => {
+      const summary = {};
+      for (const [speaker, phrases] of phraseMap.entries()) {
+        let best = null;
+        for (const [, info] of phrases.entries()) {
+          if (info.count >= MIN_REPEAT_COUNT) {
+            if (!best || info.count > best.count) {
+              best = info;
+            }
+          }
+        }
+        if (best) {
+          summary[speaker] = {
+            phrase: best.sample,
+            count: best.count,
+          };
+        }
+      }
+      return summary;
+    })(),
   };
 }
 
@@ -974,4 +1021,3 @@ app.listen(PORT, () => {
     );
   }
 });
-
