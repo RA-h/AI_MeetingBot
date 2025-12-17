@@ -60,40 +60,41 @@ function parseSummarySections(text) {
         other: '',
     };
 
-    if (!text) return result;
+    if (!text || typeof text !== 'string') return result;
 
     const lines = text.split(/\r?\n/);
-    let currentKey = 'other';
-    let buffer = [];
+    let currentKey = 'overview';
+    const buffer = [];
 
     function flush() {
         if (!buffer.length) return;
         const chunk = buffer.join('\n').trim();
-        if (!chunk) {
-            buffer = [];
-            return;
-        }
-        if (result[currentKey]) {
-            result[currentKey] += '\n\n' + chunk;
-        } else {
+        if (!chunk) return;
+
+        if (!result[currentKey]) {
             result[currentKey] = chunk;
+        } else {
+            result[currentKey] += '\n' + chunk;
         }
-        buffer = [];
+        buffer.length = 0;
     }
 
-    for (const line of lines) {
-        const headingMatch = line.match(/^##\s*(\d+\.\s*)?(.*)$/i);
-        if (headingMatch) {
-            flush();
-            const title = headingMatch[2].trim().toLowerCase();
+    for (const raw of lines) {
+        const line = raw.trim();
 
-            if (title.includes('overview')) {
+        // heading line?
+        const m = /^#{1,6}\s*(.+)$/.exec(line);
+        if (m) {
+            flush();
+            const heading = m[1].toLowerCase();
+
+            if (heading.includes('overview') || heading.includes('summary')) {
                 currentKey = 'overview';
-            } else if (title.includes('decision')) {
+            } else if (heading.includes('decision')) {
                 currentKey = 'decisions';
-            } else if (title.includes('action')) {
+            } else if (heading.includes('action')) {
                 currentKey = 'actions';
-            } else if (title.includes('inclusiv') || title.includes('engagement')) {
+            } else if (heading.includes('inclusiv') || heading.includes('engagement')) {
                 currentKey = 'inclusivity';
             } else {
                 currentKey = 'other';
@@ -107,6 +108,15 @@ function parseSummarySections(text) {
 
     flush();
     return result;
+}
+
+// Format seconds into mm:ss for timestamps
+function formatTimeSec(sec) {
+    if (typeof sec !== 'number' || !Number.isFinite(sec)) return '';
+    const s = Math.max(0, Math.floor(sec));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
 }
 
 export default function App() {
@@ -132,6 +142,7 @@ export default function App() {
 
     const transcripts = botState?.transcripts || [];
     const partialTranscript = botState?.partialTranscript || '';
+    const participation = botState?.participation || null;
 
     const wordCounts = useMemo(
         () => computeWordCounts(transcripts),
@@ -175,7 +186,7 @@ export default function App() {
         }
     }
 
-    // end bot & show summary
+    // End bot & go to summary view
     async function handleEndBot() {
         if (!botId) return;
         setError('');
@@ -199,7 +210,70 @@ export default function App() {
         }
     }
 
-    // Poll bot state
+    async function handleAskCoachNow() {
+        console.log('[AskCoach] button clicked');
+
+        if (!botId) {
+            console.warn('[AskCoach] No botId yet, cannot ask coach.');
+            setCoachHint('No bot is active yet.');
+            return;
+        }
+        if (!coachEnabled) {
+            console.warn('[AskCoach] Coach is disabled.');
+            setCoachHint('Turn on the coach toggle first.');
+            return;
+        }
+        if (!transcripts.length) {
+            console.warn('[AskCoach] No transcripts yet for coach to analyze.');
+            setCoachHint('Coach needs at least one transcript line.');
+            return;
+        }
+
+        try {
+            setCoachBusy(true);
+            console.log('[AskCoach] calling /api/bots/' + botId + '/coach …');
+
+            const res = await fetch(`${API_BASE}/api/bots/${botId}/coach`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ userName: 'You' }),
+            });
+
+            const data = await res.json().catch(() => ({}));
+            console.log('[AskCoach] response:', res.status, data);
+
+            if (!res.ok || data.error) {
+                console.error('[AskCoach] Coach error:', data);
+                setCoachHint('Coach request failed.');
+                return;
+            }
+
+            if (data.finishReason) {
+                console.log('[AskCoach] finish_reason:', data.finishReason);
+            }
+
+            const hintText =
+                typeof data.hint === 'string' ? data.hint.trim() : '';
+
+            if (hintText) {
+                setCoachHint(hintText);
+            } else if (data.hint === null) {
+                setCoachHint('Coach had no specific hint right now.');
+            } else if (data.finishReason === 'max_output_tokens') {
+                setCoachHint('Coach hit a token limit; try again in a moment.');
+            } else {
+                setCoachHint('Coach response was empty.');
+            }
+        } catch (err) {
+            console.error('[AskCoach] exception:', err);
+            setCoachHint('Coach request threw an exception.');
+        } finally {
+            setCoachBusy(false);
+        }
+    }
+
+
+    // Poll bot state (transcripts, participants, participation stats)
     useEffect(() => {
         if (!botId) return;
 
@@ -232,9 +306,11 @@ export default function App() {
         if (!transcripts.length) return;
 
         let cancelled = false;
+        let polling = false;
 
         async function pollCoach() {
-            if (cancelled || coachBusy) return;
+            if (cancelled || polling) return;
+            polling = true;
             try {
                 setCoachBusy(true);
                 const res = await fetch(`${API_BASE}/api/bots/${botId}/coach`, {
@@ -247,27 +323,32 @@ export default function App() {
                 });
 
                 const data = await res.json().catch(() => ({}));
-                if (cancelled) return;
-
-                if (res.ok && data.show && data.hint) {
-                    setCoachHint(data.hint);
+                if (!cancelled && res.ok) {
+                    const hintText =
+                        typeof data.hint === 'string' ? data.hint.trim() : '';
+                    if (hintText) {
+                        setCoachHint(hintText);
+                    } else if (data.hint === null) {
+                        setCoachHint('');
+                    }
                 }
             } catch (err) {
-                console.error('Error calling /coach:', err);
+                if (!cancelled) console.error('Error calling /coach:', err);
             } finally {
                 if (!cancelled) setCoachBusy(false);
+                polling = false;
             }
         }
 
         // Call once, then at interval
         pollCoach();
-        const id = setInterval(pollCoach, 75000); // ~75s
+        const id = setInterval(pollCoach, 50000); // ~50s
 
         return () => {
             cancelled = true;
             clearInterval(id);
         };
-    }, [botId, view, coachEnabled, transcripts.length, coachBusy]);
+    }, [botId, view, coachEnabled, transcripts.length]);
 
     // If in summary view and we have a bot, show summary page
     if (view === 'summary' && botId && botState) {
@@ -298,8 +379,8 @@ export default function App() {
                 <div className="app-title">
                     <h1>Meeting AI Bot Console</h1>
                     <span>
-                        Create a Recall bot, join a Zoom meeting, and watch participants +
-                        transcripts in real time.
+                        Create a Recall bot, join a Zoom/Meet/Teams meeting, and watch
+                        participants + transcripts in real time.
                     </span>
                 </div>
                 <div className="badge">
@@ -320,7 +401,7 @@ export default function App() {
 
                 <form
                     onSubmit={handleCreateBot}
-                    style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+                    style={{display: 'flex', flexDirection: 'column', gap: 10}}
                 >
                     <div className="field-row">
                         <input
@@ -334,6 +415,7 @@ export default function App() {
                             className="button"
                             type="submit"
                             disabled={creating || !meetingUrl.trim()}
+                            style={botId ? { display: 'none' } : undefined}
                         >
                             {creating ? 'Creating…' : botId ? 'Create new bot' : 'Create bot'}
                         </button>
@@ -370,6 +452,7 @@ export default function App() {
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
+                            flexWrap: 'wrap',
                         }}
                     >
                         <label
@@ -385,9 +468,29 @@ export default function App() {
                                 checked={coachEnabled}
                                 onChange={(e) => setCoachEnabled(e.target.checked)}
                             />
-                            Enable live participation coaching
+                            <span>Enable live participation coach</span>
                         </label>
+
+                        <button
+                            type="button"
+                            onClick={handleAskCoachNow}
+                            // while debugging, keep it always enabled except when busy
+                            disabled={coachBusy}
+                            style={{
+                                fontSize: 11,
+                                padding: '4px 10px',
+                                borderRadius: 999,
+                                border: 'none',
+                                background: 'rgba(59,130,246,0.2)',
+                                color: '#e5e7eb',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            Ask coach now
+                        </button>
+
                     </div>
+
 
                     {error && (
                         <div
@@ -420,7 +523,7 @@ export default function App() {
 
                     <div className="transcript-list">
                         {(!botId || (!transcripts.length && !partialTranscript)) && (
-                            <div style={{ opacity: 0.6, fontSize: 13 }}>
+                            <div style={{opacity: 0.6, fontSize: 13}}>
                                 {botId
                                     ? 'Waiting for the bot to hear some audio…'
                                     : 'Create a bot and start talking in the meeting.'}
@@ -429,7 +532,29 @@ export default function App() {
 
                         {transcripts.map((t) => (
                             <div key={t.id} className="transcript-item">
-                                <div className="transcript-speaker">{t.speakerName}</div>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                    }}
+                                >
+                                    <div className="transcript-speaker">
+                                        {t.speakerName}
+                                    </div>
+                                    {typeof t.startSec === 'number' && (
+                                        <div
+                                            style={{
+                                                fontSize: 11,
+                                                opacity: 0.7,
+                                                fontVariantNumeric: 'tabular-nums',
+                                            }}
+                                        >
+                                            {formatTimeSec(t.startSec)}
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="transcript-text">{t.text}</div>
                             </div>
                         ))}
@@ -484,6 +609,13 @@ export default function App() {
                                         )}
                                     </div>
                                 </div>
+
+                                {participation && (
+                                    <ParticipationDiagnostics
+                                        participation={participation}
+                                        mode="live"
+                                    />
+                                )}
 
                                 {participantsList.map((p) => (
                                     <ParticipantRow key={p.id} p={p} />
@@ -574,27 +706,134 @@ function SummarySectionCard({ title, children }) {
     return (
         <div
             style={{
-                padding: 12,
                 borderRadius: 10,
-                background: '#050609',
-                border: '1px solid rgba(255,255,255,0.06)',
+                border: '1px solid rgba(148,163,184,0.35)',
+                padding: 10,
+                marginTop: 8,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 6,
+                gap: 4,
+                background: '#020617',
             }}
         >
             <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
-            <pre
-                style={{
-                    margin: 0,
-                    fontSize: 12,
-                    whiteSpace: 'pre-wrap',
-                    lineHeight: 1.5,
-                    opacity: 0.95,
-                }}
-            >
-                {children}
-            </pre>
+            <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{children}</div>
+        </div>
+    );
+}
+
+/* ---------- Participation Diagnostics ---------- */
+
+function ParticipationDiagnostics({ participation, mode = 'live' }) {
+    if (!participation) return null;
+
+    const {
+        totalWords,
+        totalTurns,
+        speakingShare = {},
+        dominantSpeaker,
+        dominantShare,
+        underrepresented = [],
+        transitions,
+        interruptions,
+        longestSilence = {},
+        window = {},
+        durationSec,
+    } = participation;
+
+    const recentDom = window.dominantSpeaker;
+    const recentShare = window.dominantShare;
+
+    const title =
+        mode === 'live'
+            ? 'Live participation diagnostics'
+            : 'Participation diagnostics (full call)';
+
+    return (
+        <div
+            style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                background: '#020617',
+                border: '1px dashed rgba(148,163,184,0.4)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                fontSize: 12,
+            }}
+        >
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{title}</div>
+
+            {dominantSpeaker && dominantShare > 0 ? (
+                <div>
+                    <strong>Dominant speaker (last few turns):</strong>{' '}
+                    {dominantSpeaker} &nbsp;(
+                    {(dominantShare * 100).toFixed(0)}% of recent words)
+                </div>
+            ) : (
+                <div>
+                    <strong>Dominant speaker (last few turns):</strong> –
+                </div>
+            )}
+
+            {underrepresented.length > 0 ? (
+                <div>
+                    <strong>Underrepresented voices:</strong>{' '}
+                    {underrepresented
+                        .map(
+                            (u) => `${u.name} (${(u.share * 100).toFixed(0)}%)`,
+                        )
+                        .join(', ')}
+                </div>
+            ) : (
+                <div>
+                    <strong>Underrepresented voices:</strong> none detected yet
+                </div>
+            )}
+
+            <div>
+                <strong>Interruptions seen:</strong>{' '}
+                {totalInterruptions || 0}
+                {topInterrupter && (
+                    <>
+                        {' '}
+                        — mostly by {topInterrupter} (×{topInterruptionCount})
+                    </>
+                )}
+            </div>
+
+            {longestSilence ? (
+                <div>
+                    <strong>Longest silence:</strong>{' '}
+                    {formatTimeSec(longestSilence.durationSec)} between{' '}
+                    {formatTimeSec(longestSilence.fromSec)} and{' '}
+                    {formatTimeSec(longestSilence.toSec)}
+                </div>
+            ) : (
+                <div>
+                    <strong>Longest silence:</strong> none longer than ~15s so far
+                </div>
+            )}
+
+            {Object.keys(repetitionSummary).length > 0 && (
+                <div>
+                    <strong>Repetition patterns:</strong>{' '}
+                    {Object.entries(repetitionSummary)
+                        .map(([name, info]) => {
+                            const phrase =
+                                (info.phrase || '').length > 40
+                                    ? `${info.phrase.slice(0, 40)}…`
+                                    : info.phrase || '(short utterance)';
+                            return `${name} keeps repeating “${phrase}” (×${info.count})`;
+                        })
+                        .join('; ')}
+                </div>
+            )}
+
+            <div style={{ opacity: 0.7 }}>
+                <strong>Total words in call so far:</strong> {totalWords || 0}
+            </div>
         </div>
     );
 }
@@ -609,57 +848,61 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
 
     // AI summary local state
     const [summaryText, setSummaryText] = useState(botState.summary?.text || '');
+    const [summaryFinishReason, setSummaryFinishReason] = useState(
+        botState.summary?.finishReason || null,
+    );
     const [summaryLoading, setSummaryLoading] = useState(false);
     const [summaryError, setSummaryError] = useState('');
 
     // Keep local summary in sync with backend state
     useEffect(() => {
         setSummaryText(botState.summary?.text || '');
+        setSummaryFinishReason(botState.summary?.finishReason || null);
     }, [botState.summary]);
 
-    // Call backend to generate AI Meeting Summary + Inclusivity Report
     async function handleGenerateSummary() {
         if (!botId) return;
-        if (!transcripts.length) {
-            setSummaryError('No transcript captured yet to summarize.');
-            return;
-        }
-
-        setSummaryError('');
         setSummaryLoading(true);
+        setSummaryError('');
 
         try {
             const res = await fetch(`${API_BASE}/api/bots/${botId}/summary`, {
                 method: 'POST',
+                headers: { 'content-type': 'application/json' },
             });
-            const data = await res.json();
 
+            const data = await res.json().catch(() => ({}));
             if (!res.ok || data.error) {
-                console.error('AI summary error:', data);
-                setSummaryError(data.error || 'Failed to generate AI summary.');
+                console.error('Summary failed:', data);
+                setSummaryError(data.error || 'Failed to generate summary.');
                 return;
             }
 
-            setSummaryText(data.summary?.text || '');
+            // Backend returns { text, createdAt, model }
+            const newText =
+                typeof data.text === 'string'
+                    ? data.text
+                    : typeof data.summaryText === 'string'
+                    ? data.summaryText
+                    : '';
+
+            if (newText) setSummaryText(newText);
+            if (data.finishReason) setSummaryFinishReason(data.finishReason);
         } catch (err) {
-            console.error('AI summary error:', err);
-            setSummaryError(err.message || 'Failed to generate AI summary.');
+            console.error('Error calling /summary:', err);
+            setSummaryError('Could not reach backend to summarize.');
         } finally {
             setSummaryLoading(false);
         }
     }
 
-    // Parse the summary into sections
-    const sections = useMemo(
-        () => parseSummarySections(summaryText),
-        [summaryText],
-    );
-
+    const sections = useMemo(() => parseSummarySections(summaryText), [summaryText]);
     const hasStructuredSections =
         !!sections.overview ||
         !!sections.decisions ||
         !!sections.actions ||
-        !!sections.inclusivity;
+        !!sections.inclusivity ||
+        !!sections.other;
 
     return (
         <div className="app-shell">
@@ -667,7 +910,7 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                 <div className="app-title">
                     <h1>Meeting summary</h1>
                     <span>
-                        Final transcript, speaking share, and an AI-generated meeting summary +
+                        Final transcript, speaking share, and AI-powered summary +
                         inclusivity report.
                     </span>
                 </div>
@@ -701,19 +944,41 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
 
                         {transcripts.map((t) => (
                             <div key={t.id} className="transcript-item">
-                                <div className="transcript-speaker">{t.speakerName}</div>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                    }}
+                                >
+                                    <div className="transcript-speaker">
+                                        {t.speakerName}
+                                    </div>
+                                    {typeof t.startSec === 'number' && (
+                                        <div
+                                            style={{
+                                                fontSize: 11,
+                                                opacity: 0.7,
+                                                fontVariantNumeric: 'tabular-nums',
+                                            }}
+                                        >
+                                            {formatTimeSec(t.startSec)}
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="transcript-text">{t.text}</div>
                             </div>
                         ))}
                     </div>
                 </section>
 
-                {/* Right: wordshare + AI summary */}
+                {/* Right: analytics + AI summary */}
                 <section className="card">
                     <div className="card-header">
                         <div>
                             <h2>Speaking analytics</h2>
-                            <span>Word counts, speaking share, and AI summary.</span>
+                            <span>Word counts, participation, and summary.</span>
                         </div>
                     </div>
 
@@ -751,98 +1016,120 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                         )}
                     </div>
 
+                    {botState.participation && (
+                        <ParticipationDiagnostics
+                            participation={botState.participation}
+                            mode="summary"
+                        />
+                    )}
+
                     <div
                         style={{
                             marginTop: 16,
+                            padding: 12,
+                            borderRadius: 10,
+                            background: '#111318',
+                            border: '1px dashed rgba(255,255,255,0.12)',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: 12,
+                            gap: 6,
                         }}
                     >
-                        <div
-                            style={{
-                                padding: 12,
-                                borderRadius: 10,
-                                background: '#111318',
-                                border: '1px dashed rgba(255,255,255,0.12)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 8,
-                            }}
-                        >
-                            <div style={{ fontSize: 14, fontWeight: 600 }}>
-                                AI Meeting Summary + Inclusivity Report
-                            </div>
-
-                            {!summaryText && (
-                                <div style={{ fontSize: 12, opacity: 0.8 }}>
-                                    No AI summary has been generated yet. Click the button below to
-                                    generate a structured meeting summary with inclusivity analysis
-                                    based on the final transcript.
-                                </div>
-                            )}
-
-                            {summaryError && (
-                                <div
-                                    style={{
-                                        marginTop: 4,
-                                        fontSize: 12,
-                                        color: '#fecaca',
-                                    }}
-                                >
-                                    {summaryError}
-                                </div>
-                            )}
-
-                            <button
-                                className="button button-secondary"
-                                style={{ marginTop: 4, alignSelf: 'flex-start' }}
-                                onClick={handleGenerateSummary}
-                                disabled={summaryLoading || !transcripts.length}
-                            >
-                                {summaryLoading ? 'Summarizing…' : 'Generate AI summary'}
-                            </button>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>AI summary</div>
+                        <div style={{ fontSize: 12, opacity: 0.8 }}>
+                            This summary is generated using the full transcript and
+                            participation signals (dominance, silence, underrepresentation,
+                            interruptions). It is structured into sections for faster review.
                         </div>
 
-                        {summaryText && hasStructuredSections && (
-                            <>
-                                {sections.overview && (
-                                    <SummarySectionCard title="Overview">
-                                        {sections.overview}
-                                    </SummarySectionCard>
-                                )}
+                        <button
+                            className="button"
+                            type="button"
+                            onClick={handleGenerateSummary}
+                            disabled={summaryLoading}
+                            style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                        >
+                            {summaryLoading ? 'Generating…' : 'Generate / refresh summary'}
+                        </button>
 
-                                {sections.decisions && (
-                                    <SummarySectionCard title="Key Decisions">
-                                        {sections.decisions}
-                                    </SummarySectionCard>
-                                )}
-
-                                {sections.actions && (
-                                    <SummarySectionCard title="Action Items">
-                                        {sections.actions}
-                                    </SummarySectionCard>
-                                )}
-
-                                {sections.inclusivity && (
-                                    <SummarySectionCard title="Inclusivity & Engagement">
-                                        {sections.inclusivity}
-                                    </SummarySectionCard>
-                                )}
-
-                                {sections.other && (
-                                    <SummarySectionCard title="Other Notes">
-                                        {sections.other}
-                                    </SummarySectionCard>
-                                )}
-                            </>
+                        {summaryError && (
+                            <div
+                                style={{
+                                    marginTop: 4,
+                                    fontSize: 12,
+                                    color: '#fecaca',
+                                }}
+                            >
+                                {summaryError}
+                            </div>
                         )}
 
-                        {/* Fallback if parsing fails: show raw summary */}
-                        {summaryText && !hasStructuredSections && (
-                            <SummarySectionCard title="Summary">
-                                {summaryText}
-                            </SummarySectionCard>
+                        {summaryText && (
+                            <div style={{ marginTop: 8 }}>
+                                {summaryFinishReason === 'length' && (
+                                    <div
+                                        style={{
+                                            fontSize: 11,
+                                            color: '#fde68a',
+                                            marginBottom: 6,
+                                        }}
+                                    >
+                                        Note: The AI stopped early because it hit the length
+                                        limit; content may be truncated.
+                                    </div>
+                                )}
+
+                                {hasStructuredSections && (
+                                    <>
+                                        {sections.overview && (
+                                            <SummarySectionCard title="Overview">
+                                                {sections.overview}
+                                            </SummarySectionCard>
+                                        )}
+                                        {sections.decisions && (
+                                            <SummarySectionCard title="Decisions">
+                                                {sections.decisions}
+                                            </SummarySectionCard>
+                                        )}
+                                        {sections.actions && (
+                                            <SummarySectionCard title="Action items">
+                                                {sections.actions}
+                                            </SummarySectionCard>
+                                        )}
+                                        {sections.inclusivity && (
+                                            <SummarySectionCard title="Inclusivity & Engagement">
+                                                {sections.inclusivity}
+                                            </SummarySectionCard>
+                                        )}
+
+                                        {sections.other && (
+                                            <SummarySectionCard title="Other Notes">
+                                                {sections.other}
+                                            </SummarySectionCard>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* Fallback if parsing fails: show raw summary */}
+                                {summaryText && !hasStructuredSections && (
+                                    <SummarySectionCard title="Summary">
+                                        {summaryText}
+                                    </SummarySectionCard>
+                                )}
+                            </div>
+                        )}
+
+                        {!summaryText && (
+                            <div
+                                style={{
+                                    marginTop: 4,
+                                    fontSize: 12,
+                                    opacity: 0.8,
+                                }}
+                            >
+                                No summary generated yet. Click &quot;Generate / refresh
+                                summary&quot; after the call to get a structured recap.
+                            </div>
                         )}
                     </div>
 
@@ -870,6 +1157,13 @@ function SummaryView({ botId, botState, statusMeta, wordCounts, pieData, onBack 
                     </div>
                 </section>
             </main>
+
+            {coachHint && (
+                <CoachToast
+                    message={coachHint}
+                    onClose={() => setCoachHint('')}
+                />
+            )}
         </div>
     );
 }
@@ -890,39 +1184,20 @@ function CoachToast({ message, onClose }) {
                 boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
                 border: '1px solid rgba(248,250,252,0.1)',
                 zIndex: 9999,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
             }}
         >
             <div
                 style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
+                    fontSize: 11,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    opacity: 0.7,
+                    marginBottom: 4,
                 }}
             >
-                <span
-                    style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        background: '#22c55e',
-                    }}
-                />
-                AI Participation Coach
+                Participation coach
             </div>
-            <div
-                style={{
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    opacity: 0.95,
-                }}
-            >
-                {message}
-            </div>
+            <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{message}</div>
             <div
                 style={{
                     display: 'flex',
