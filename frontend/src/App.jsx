@@ -470,7 +470,7 @@ export default function App() {
                 <div className="app-title">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <Icon name="bolt" size={20} />
-                        <h1 style={{ margin: 0 }}>Meeting AI Console</h1>
+                        <h1 style={{ margin: 0 }}>Echo AI</h1>
                     </div>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Icon name="wave" size={16} />
@@ -488,7 +488,10 @@ export default function App() {
             >
                 <div className="card-header">
                     <div>
-                        <h2>Meeting Link</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Icon name="link" size={18} />
+                            <h2>Meeting Link</h2>
+                        </div>
                         <span>Paste a Zoom/Meet/Teams link to spawn a bot.</span>
                     </div>
                 </div>
@@ -519,7 +522,6 @@ export default function App() {
                             disabled={creating || !meetingUrl.trim()}
                             style={botId ? { display: 'none' } : undefined}
                         >
-                            <Icon name="link" />
                             {creating ? 'Creating...' : botId ? 'Create new bot' : 'Create bot'}
                         </button>
                         {botId && !endRequested && (
@@ -1827,7 +1829,7 @@ function SummaryView({
         <div className="app-shell">
             <header className="app-header">
                 <div className="app-title">
-                    <h1>Meeting summary</h1>
+                    <h1>Echo AI Summary</h1>
                     <span>
                         Final transcript, speaking share, and AI-powered summary +
                         inclusivity report.
