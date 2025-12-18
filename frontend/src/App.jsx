@@ -1,5 +1,5 @@
 ﻿// frontend/src/App.jsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import WordSharePie from './WordSharePie';
 
 const API_BASE = 'http://localhost:8000';
@@ -27,7 +27,7 @@ function statusInfo(status) {
         return { label: 'Recording', tone: 'active' };
     }
     if (status === 'joining_call' || status === 'joining_meeting' || status === 'starting') {
-        return { label: 'Joiningâ€¦', tone: 'idle' };
+        return { label: 'Joining...', tone: 'idle' };
     }
     if (status === 'ended' || status === 'finished' || status === 'call_ended') {
         return { label: 'Finished', tone: 'finished' };
@@ -121,13 +121,46 @@ function parseSummarySections(text) {
     return result;
 }
 
-// Format seconds into mm:ss for timestamps
+// Format seconds into a human-readable time.
+// - If the value looks like an absolute epoch timestamp (very large), show local clock time.
+// - Otherwise, show h:mm:ss or m:ss from the start of the call.
 function formatTimeSec(sec) {
     if (typeof sec !== 'number' || !Number.isFinite(sec)) return '';
     const s = Math.max(0, Math.floor(sec));
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return `${m}:${String(r).padStart(2, '0')}`;
+
+    // Heuristic: if the seconds value is larger than ~2 days, treat it as epoch seconds.
+    if (s > 172800) {
+        const d = new Date(s * 1000);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    const hours = Math.floor(s / 3600);
+    const minutes = Math.floor((s % 3600) / 60);
+    const seconds = s % 60;
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Reusable hover styling for cards with a subtle purple lift.
+function useHoverCard(strength = 'medium') {
+    const [hover, setHover] = useState(false);
+    const strong = strength === 'strong';
+    const style = {
+        transition: 'transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease',
+        transform: hover ? 'translateY(-2.2px)' : 'none',
+        boxShadow: hover
+            ? (strong ? '0 16px 36px rgba(122,90,248,0.20)' : '0 14px 28px rgba(122,90,248,0.16)')
+            : '0 8px 18px rgba(15,23,42,0.08)',
+        border: undefined,
+    };
+    const handlers = {
+        onMouseEnter: () => setHover(true),
+        onMouseLeave: () => setHover(false),
+    };
+    return { style, handlers };
 }
 
 export default function App() {
@@ -135,14 +168,17 @@ export default function App() {
     const [botId, setBotId] = useState(null);
     const [botState, setBotState] = useState(null);
     const [creating, setCreating] = useState(false);
+    const [endRequested, setEndRequested] = useState(false);
     const [error, setError] = useState('');
     const [pollIntervalMs] = useState(1000);
     const [view, setView] = useState('live'); // 'live' | 'summary'
+    const [speakingView, setSpeakingView] = useState('ratio'); // 'ratio' | 'duration'
 
     // Live coaching state
     const [coachEnabled, setCoachEnabled] = useState(true);
     const [coachHint, setCoachHint] = useState('');
     const [coachBusy, setCoachBusy] = useState(false);
+    const lastCoachAtRef = useRef(0);
 
     const participantsList = useMemo(() => {
         if (!botState?.participants) return [];
@@ -153,6 +189,7 @@ export default function App() {
 
     const transcripts = botState?.transcripts ?? EMPTY_TRANSCRIPTS;
     const partialTranscript = botState?.partialTranscript || '';
+    const transcriptListRef = useRef(null);
     const participation = botState?.participation || null;
 
     const wordCounts = useMemo(
@@ -167,6 +204,14 @@ export default function App() {
         });
         return map;
     }, [pieData]);
+    const totalWordsCount =
+        participation?.totalWords ??
+        Object.values(wordCounts).reduce((sum, v) => sum + v, 0);
+    const callDurationSec = participation?.durationSec ?? null;
+    const liveTranscriptHover = useHoverCard('strong');
+    const liveParticipantsHover = useHoverCard('strong');
+    const meetingCardHover = useHoverCard('strong');
+    const liveTimelineHover = useHoverCard('strong');
 
     async function handleCreateBot(e) {
         e?.preventDefault();
@@ -196,6 +241,7 @@ export default function App() {
             setBotId(data.botId);
             setBotState(null);
             setView('live');
+            setEndRequested(false);
         } catch (err) {
             console.error('Error calling /api/bots:', err);
             setError('Could not reach backend.');
@@ -208,6 +254,7 @@ export default function App() {
     async function handleEndBot() {
         if (!botId) return;
         setError('');
+        setEndRequested(true);
 
         try {
             const res = await fetch(`${API_BASE}/api/bots/${botId}/stop`, {
@@ -218,6 +265,7 @@ export default function App() {
             if (!res.ok || data.error) {
                 console.error('End bot failed:', data);
                 setError(data.error || 'Failed to stop bot.');
+                setEndRequested(false);
                 return;
             }
 
@@ -225,6 +273,7 @@ export default function App() {
         } catch (err) {
             console.error('Error calling /api/bots/:id/stop:', err);
             setError('Could not reach backend to stop bot.');
+            setEndRequested(false);
         }
     }
 
@@ -249,7 +298,7 @@ export default function App() {
 
         try {
             setCoachBusy(true);
-            console.log('[AskCoach] calling /api/bots/' + botId + '/coach â€¦');
+            console.log('[AskCoach] calling /api/bots/' + botId + '/coach ...');
 
             const res = await fetch(`${API_BASE}/api/bots/${botId}/coach`, {
                 method: 'POST',
@@ -263,6 +312,7 @@ export default function App() {
             if (!res.ok || data.error) {
                 console.error('[AskCoach] Coach error:', data);
                 setCoachHint('Coach request failed.');
+                lastCoachAtRef.current = Date.now();
                 return;
             }
 
@@ -275,6 +325,7 @@ export default function App() {
 
             if (hintText) {
                 setCoachHint(hintText);
+                lastCoachAtRef.current = Date.now();
             } else if (data.hint === null) {
                 setCoachHint('Coach had no specific hint right now.');
             } else if (data.finishReason === 'max_output_tokens') {
@@ -318,7 +369,19 @@ export default function App() {
     const status = botState?.status;
     const statusMeta = statusInfo(status);
 
-    // Live coaching polling (every ~75s)
+    // Auto-scroll transcript to bottom on new entries
+    useEffect(() => {
+        const el = transcriptListRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+    }, [transcripts.length, partialTranscript]);
+
+    // Reset coach throttle when switching bots
+    useEffect(() => {
+        lastCoachAtRef.current = 0;
+    }, [botId]);
+
+    // Live coaching polling (every ~2 minutes, throttled)
     useEffect(() => {
         if (!botId || view !== 'live' || !coachEnabled) return;
         if (!transcripts.length) return;
@@ -328,6 +391,11 @@ export default function App() {
 
         async function pollCoach() {
             if (cancelled || polling) return;
+            const MIN_SPACING_MS = 2 * 60 * 1000; // ~2 minutes minimum gap
+            const now = Date.now();
+            if (now - lastCoachAtRef.current < MIN_SPACING_MS) {
+                return;
+            }
             polling = true;
             try {
                 setCoachBusy(true);
@@ -346,8 +414,10 @@ export default function App() {
                         typeof data.hint === 'string' ? data.hint.trim() : '';
                     if (hintText) {
                         setCoachHint(hintText);
+                        lastCoachAtRef.current = Date.now();
                     } else if (data.hint === null) {
                         setCoachHint('');
+                        lastCoachAtRef.current = Date.now();
                     }
                 }
             } catch (err) {
@@ -360,7 +430,7 @@ export default function App() {
 
         // Call once, then at interval
         pollCoach();
-        const id = setInterval(pollCoach, 50000); // ~50s
+        const id = setInterval(pollCoach, 60000); // ~60s
 
         return () => {
             cancelled = true;
@@ -379,6 +449,8 @@ export default function App() {
                     wordCounts={wordCounts}
                     pieData={pieData}
                     speakerColors={speakerColors}
+                    speakingView={speakingView}
+                    setSpeakingView={setSpeakingView}
                     onBack={() => setView('live')}
                 />
                 {coachHint && (
@@ -409,7 +481,11 @@ export default function App() {
             </header>
 
             {/* BOT CONTROL CARD */}
-            <section className="card">
+            <section
+                className="card"
+                style={{ ...meetingCardHover.style }}
+                {...meetingCardHover.handlers}
+            >
                 <div className="card-header">
                     <div>
                         <h2>Meeting Link</h2>
@@ -444,16 +520,28 @@ export default function App() {
                             style={botId ? { display: 'none' } : undefined}
                         >
                             <Icon name="link" />
-                            {creating ? 'Creatingâ€¦' : botId ? 'Create new bot' : 'Create bot'}
+                            {creating ? 'Creating...' : botId ? 'Create new bot' : 'Create bot'}
                         </button>
-                        {botId && (
+                        {botId && !endRequested && (
                             <button
                                 type="button"
                                 className="button"
                                 onClick={handleEndBot}
+                                disabled={endRequested}
                             >
                                 <Icon name="stop" />
-                                End bot &amp; show summary
+                                {endRequested ? 'Ending...' : 'End bot & show summary'}
+                            </button>
+                        )}
+
+                        {botId && (endRequested || status === 'ended' || view === 'summary') && (
+                            <button
+                                type="button"
+                                className="button"
+                                onClick={() => setView('summary')}
+                            >
+                                <Icon name="doc" />
+                                Show summary
                             </button>
                         )}
                     </div>
@@ -483,7 +571,16 @@ export default function App() {
                             type="button"
                             onClick={handleAskCoachNow}
                             className="button"
-                            disabled={coachBusy}
+                            disabled={coachBusy || !coachEnabled || !botId}
+                            style={
+                                coachEnabled && botId
+                                    ? undefined
+                                    : {
+                                          background: '#e5e7eb',
+                                          color: '#9ca3af',
+                                          cursor: 'not-allowed',
+                                      }
+                            }
                         >
                             <Icon name="chat" />
                             Ask coach now
@@ -509,7 +606,11 @@ export default function App() {
             {/* LIVE LAYOUT */}
             <main className="layout-main">
                 {/* Transcript card */}
-                <section className="card">
+                <section
+                    className="card"
+                    style={{ alignSelf: 'flex-start', flex: '0 0 auto', ...liveTranscriptHover.style }}
+                    {...liveTranscriptHover.handlers}
+                >
                     <div className="card-header">
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -524,7 +625,11 @@ export default function App() {
                         <span className="badge-small">{transcripts.length} turns</span>
                     </div>
 
-                    <div className="transcript-list">
+                    <div
+                        className="transcript-list"
+                        ref={transcriptListRef}
+                        style={{ maxHeight: '70vh', overflowY: 'auto', paddingRight: 6 }}
+                    >
                         {(!botId || (!transcripts.length && !partialTranscript)) && (
                             <div style={{opacity: 0.6, fontSize: 13}}>
                                 {botId
@@ -543,7 +648,12 @@ export default function App() {
                                         gap: 8,
                                     }}
                                 >
-                                    <div className="transcript-speaker">
+                                    <div
+                                        className="transcript-speaker"
+                                        style={{
+                                            color: speakerColors[t.speakerName] || '#7a5af8',
+                                        }}
+                                    >
                                         {t.speakerName}
                                     </div>
                                     {typeof t.startSec === 'number' && (
@@ -572,7 +682,11 @@ export default function App() {
                 </section>
 
                 {/* Participants card */}
-                <section className="card">
+                <section
+                    className="card"
+                    style={{ alignSelf: 'flex-start', flex: '0 0 auto', ...liveParticipantsHover.style }}
+                    {...liveParticipantsHover.handlers}
+                >
                     <div className="card-header">
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -585,7 +699,10 @@ export default function App() {
                         </span>
                     </div>
 
-                    <div className="participants-list">
+                    <div
+                        className="participants-list"
+                        style={{ maxHeight: '100vh', overflowY: 'auto', paddingRight: 6 }}
+                    >
                         {!botId && (
                             <div style={{ opacity: 0.6, fontSize: 13 }}>
                                 Create a bot to start tracking participants.
@@ -600,19 +717,83 @@ export default function App() {
 
                         {participantsList.length > 0 && (
                             <>
-                                <div className="wordshare-card">
-                                    <div className="wordshare-header">
-                                        <span>Speaking share (by words)</span>
+                                <div className="wordshare-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                    <div
+                                        style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 6,
+                                            fontSize: 13,
+                                            color: '#0f172a',
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <span>
+                                                <strong>Total words in call so far:</strong> {totalWordsCount || 0}
+                                            </span>
+                                            {Number.isFinite(callDurationSec) && (
+                                                <span>
+                                                    <strong>Call duration:</strong> {formatTimeSec(callDurationSec)}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ fontSize: 12, opacity: 0.8 }}>Speaking analytics</div>
+                                            <SpeakingViewToggle value={speakingView} onChange={setSpeakingView} />
+                                        </div>
                                     </div>
-                                    <div className="wordshare-chart">
-                                        {pieData.length > 0 ? (
-                                        <WordSharePie data={pieData} colorMap={speakerColors} />
-                                        ) : (
-                                            <div style={{ opacity: 0.6, fontSize: 12 }}>
-                                                No words counted yet.
+
+                                    <div>
+                                        <div className="wordshare-header">
+                                            <span>Speaking share (by words)</span>
+                                        </div>
+                                        <div className="wordshare-chart">
+                                            {pieData.length > 0 ? (
+                                                <WordSharePie data={pieData} colorMap={speakerColors} />
+                                            ) : (
+                                                <div style={{ opacity: 0.6, fontSize: 12 }}>
+                                                    No words counted yet.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {Object.keys(wordCounts).length > 0 && (
+                                            <div
+                                                style={{
+                                                    marginTop: 8,
+                                                    fontSize: 12,
+                                                    opacity: 0.8,
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: 4,
+                                                }}
+                                            >
+                                                {Object.entries(wordCounts).map(([name, count]) => (
+                                                    <span key={name}>
+                                                        <strong>{name}</strong>: {count} words
+                                                    </span>
+                                                ))}
                                             </div>
                                         )}
                                     </div>
+
+                                    {participation && speakingView === 'ratio' && (
+                                        <SpeakingTimeRatio
+                                            participation={participation}
+                                            title="Speaking-time ratio"
+                                            caption="Share of total words in the current call."
+                                            colorMap={speakerColors}
+                                        />
+                                    )}
+
+                                    {participation && speakingView === 'duration' && (
+                                        <SpeakingTimeDuration
+                                            participation={participation}
+                                            title="Speaking time (duration)"
+                                            caption="Who actually held the mic (by elapsed speech time)."
+                                            colorMap={speakerColors}
+                                        />
+                                    )}
                                 </div>
 
                                 {participation && (
@@ -620,15 +801,6 @@ export default function App() {
                                         participation={participation}
                                         mode="live"
                                     />
-                                )}
-
-                                {participation && (
-                                <SpeakingTimeRatio
-                                    participation={participation}
-                                    title="Speaking-time ratio"
-                                    caption="Share of total words in the current call."
-                                    colorMap={speakerColors}
-                                />
                                 )}
 
                                 {participantsList.map((p) => (
@@ -639,6 +811,27 @@ export default function App() {
                     </div>
                 </section>
             </main>
+
+            <section
+                className="card"
+                style={{ ...liveTimelineHover.style }}
+                {...liveTimelineHover.handlers}
+            >
+                <div className="card-header">
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Icon name="timeline" size={20} />
+                            <h2>Speaking timeline</h2>
+                        </div>
+                        <span>Per-speaker segments with silence gaps shaded.</span>
+                    </div>
+                </div>
+                <SpeakerTimeline
+                    transcripts={transcripts}
+                    participation={participation}
+                    colorMap={speakerColors}
+                />
+            </section>
 
             {coachHint && (
                 <CoachToast
@@ -729,6 +922,17 @@ function Icon({ name, size = 18, color = 'currentColor' }) {
                     <path d="M9 13h6M9 17h4M9 9h2" />
                 </svg>
             );
+        case 'timeline':
+            return (
+                <svg {...common}>
+                    <path d="M3 17h18" />
+                    <path d="M5 15v-4l4 2 4-6 5 4v4" />
+                    <circle cx="5" cy="11" r="1.5" />
+                    <circle cx="9" cy="13" r="1.5" />
+                    <circle cx="13" cy="7" r="1.5" />
+                    <circle cx="18" cy="11" r="1.5" />
+                </svg>
+            );
         default:
             return (
                 <svg {...common}>
@@ -782,7 +986,7 @@ function ParticipantRow({ p }) {
                     {!inCall && <span className="participant-badge">Left</span>}
                 </div>
                 <div className="participant-sub">
-                    {p.email ? p.email + ' Â· ' : ''}
+                    {p.email ? p.email + ' - ' : ''}
                     {inCall ? 'In call' : 'Not in call'}
                 </div>
             </div>
@@ -829,7 +1033,7 @@ function SummarySectionCard({ title, children }) {
                 continue;
             }
 
-            const bulletMatch = /^[-â€¢]\s*(.+)$/.exec(trimmed);
+            const bulletMatch = /^[-*]\\s*(.+)$/.exec(trimmed);
             if (bulletMatch) {
                 bullets.push(bulletMatch[1]);
                 continue;
@@ -854,13 +1058,15 @@ function SummarySectionCard({ title, children }) {
         return parts;
     }
 
+    const hover = useHoverCard('medium');
+
     const content =
         typeof children === 'string' || typeof children === 'number'
             ? renderContent(children)
             : children;
 
     return (
-        <div className="summary-section-card">
+        <div className="summary-section-card" style={hover.style} {...hover.handlers}>
             <div className="summary-section-title">{title}</div>
             <div className="summary-section-body">{content}</div>
         </div>
@@ -980,6 +1186,342 @@ function SpeakingTimeRatio({ participation, title, caption, colorMap }) {
     );
 }
 
+/* ---------- Speaking time (duration) ---------- */
+
+function SpeakingTimeDuration({ participation, title, caption, colorMap }) {
+    const durations = participation?.speakingTimeSec || {};
+    const entries = Object.entries(durations)
+        .map(([name, seconds]) => ({
+            name,
+            seconds: Number.isFinite(seconds) ? seconds : 0,
+        }))
+        .filter(({ seconds }) => seconds > 0)
+        .sort((a, b) => b.seconds - a.seconds);
+
+    if (!entries.length) return null;
+
+    const total = entries.reduce((sum, e) => sum + e.seconds, 0);
+
+    return (
+        <div
+            style={{
+                marginTop: 12,
+                padding: 14,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.65)',
+                border: '1px solid rgba(255,255,255,0.35)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                boxShadow: '0 16px 32px rgba(15,23,42,0.08)',
+                backdropFilter: 'blur(10px)',
+            }}
+        >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{title}</div>
+                {caption && <div style={{ fontSize: 12, color: '#6b7280' }}>{caption}</div>}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {entries.map(({ name, seconds }) => {
+                    const barColor = colorMap?.[name] || '#7a5af8';
+                    const share = total > 0 ? seconds / total : 0;
+                    return (
+                        <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    fontSize: 12,
+                                }}
+                            >
+                                <span>{name}</span>
+                                <span style={{ color: '#6b7280' }}>
+                                    {formatTimeSec(seconds)} · {(share * 100).toFixed(0)}%
+                                </span>
+                            </div>
+                            <div
+                                style={{
+                                    height: 10,
+                                    borderRadius: 999,
+                                    background: '#eef1f8',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: `${Math.max(0, Math.min(share, 1)) * 100}%`,
+                                        height: '100%',
+                                        background: barColor,
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div style={{ fontSize: 12, color: '#475569' }}>
+                Total speaking time tracked: {formatTimeSec(total)}
+            </div>
+        </div>
+    );
+}
+
+/* ---------- Speaker timeline (per-speaker segments + silences) ---------- */
+
+function SpeakerTimeline({ transcripts, participation, colorMap }) {
+    const [tooltip, setTooltip] = useState(null);
+    const timelineRef = useRef(null);
+    const timed = (transcripts || []).filter((t) =>
+        Number.isFinite(t.startSec)
+    );
+
+    if (!timed.length) return null;
+
+    const baseStart = Math.min(
+        ...timed.map((t) => Number.isFinite(t.startSec) ? t.startSec : Infinity)
+    );
+    const totalEnd = Math.max(
+        ...timed.map((t) => {
+            if (Number.isFinite(t.endSec)) return t.endSec;
+            if (Number.isFinite(t.startSec)) return t.startSec + 1;
+            return 0;
+        })
+    );
+    const span = Math.max(1, totalEnd - baseStart);
+
+    const perSpeaker = {};
+    timed.forEach((t) => {
+        const speaker = t.speakerName || 'Unknown';
+        const start = Number.isFinite(t.startSec) ? t.startSec - baseStart : 0;
+        const end = Number.isFinite(t.endSec)
+            ? t.endSec - baseStart
+            : start + 1;
+        const rawDur = Math.max(0, end - start);
+        const dur = Math.max(0.5, rawDur);
+        const startPct = (start / span) * 100;
+        const widthPct = (dur / span) * 100;
+        if (!perSpeaker[speaker]) perSpeaker[speaker] = [];
+        perSpeaker[speaker].push({
+            startPct,
+            widthPct: Math.min(100, widthPct),
+            hitEndPct: Math.min(100, startPct + (rawDur / span) * 100),
+            speaker,
+            text:
+                typeof t.text === 'string' && t.text.length > 40
+                    ? `${t.text.slice(0, 40)}...`
+                    : t.text || '',
+        });
+    });
+
+    const silencePeriods =
+        participation?.silence?.periods?.filter(
+            (p) =>
+                Number.isFinite(p.fromSec) &&
+                Number.isFinite(p.toSec) &&
+                p.toSec > baseStart &&
+                p.fromSec < totalEnd
+        ) || [];
+
+    const silenceRanges = silencePeriods.map((p, idx) => {
+        const rawFrom = ((p.fromSec - baseStart) / span) * 100;
+        const rawTo = ((p.toSec - baseStart) / span) * 100;
+        const fromPct = Math.max(0, rawFrom);
+        const rawWidth = Math.max(0, rawTo - rawFrom);
+        // Match the visual minimum width so hover is reliable.
+        const widthPct = Math.max(1, rawWidth);
+        const toPct = Math.min(100, fromPct + widthPct);
+        return {
+            key: `silence-${idx}`,
+            fromPct,
+            toPct,
+            widthPct: Math.min(100, widthPct),
+            durationSec: p.durationSec,
+        };
+    });
+
+    return (
+        <div
+            style={{
+                marginTop: 12,
+                padding: 14,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.65)',
+                border: '1px solid rgba(255,255,255,0.35)',
+                boxShadow: '0 16px 32px rgba(15,23,42,0.08)',
+                backdropFilter: 'blur(10px)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                position: 'relative',
+            }}
+            ref={timelineRef}
+        >
+            {Object.entries(perSpeaker).map(([name, segments]) => {
+                const color = colorMap?.[name] || '#7a5af8';
+                return (
+                    <div
+                        key={name}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontSize: 13,
+                                color: '#475569',
+                            }}
+                        >
+                            <span style={{ fontWeight: 600 }}>{name}</span>
+                        </div>
+                        <div
+                            style={{
+                                position: 'relative',
+                                height: 22,
+                                background: '#eef1f8',
+                                borderRadius: 999,
+                                overflow: 'hidden',
+                                boxShadow: 'inset 0 0 0 1px rgba(148,163,184,0.2)',
+                            }}
+                        >
+                            {silenceRanges.map((range) => (
+                                <div
+                                    key={`${name}-${range.key}`}
+                                    style={{
+                                        position: 'absolute',
+                                        left: `${range.fromPct}%`,
+                                        width: `${range.widthPct}%`,
+                                        top: 0,
+                                        bottom: 0,
+                                        background: 'linear-gradient(90deg, #e2e8f0, #f8fafc)',
+                                        opacity: 0.4,
+                                        pointerEvents: 'none',
+                                    }}
+                                />
+                            ))}
+                            {segments.map((seg, idx) => (
+                                <div
+                                    key={`${name}-${idx}`}
+                                    style={{
+                                        position: 'absolute',
+                                        left: `${seg.startPct}%`,
+                                        width: `${seg.widthPct}%`,
+                                        top: 0,
+                                        bottom: 0,
+                                        background: color,
+                                        opacity: 0.9,
+                                        borderRadius: 999,
+                                    }}
+                                    data-segment="true"
+                                    onMouseMove={(e) => {
+                                        const rect = timelineRef.current?.getBoundingClientRect();
+                                        if (!rect) return;
+                                        setTooltip({
+                                            x: e.clientX - rect.left + 12,
+                                            y: e.clientY - rect.top + 12,
+                                            title: seg.speaker || name,
+                                            body: seg.text || `${name} speaking`,
+                                        });
+                                    }}
+                                    onMouseLeave={() => setTooltip(null)}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
+
+            <div style={{ fontSize: 12, color: '#475569' }}>
+                Timeline span: {formatTimeSec(span)} (relative to first captured utterance)
+            </div>
+
+            {tooltip && tooltip.title !== 'Silence' && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: tooltip.x,
+                        top: tooltip.y,
+                        zIndex: 20,
+                        pointerEvents: 'none',
+                    }}
+                >
+                    <div
+                        style={{
+                            background: 'rgba(255,255,255,0.82)',
+                            border: '1px solid rgba(229,232,242,0.9)',
+                            borderRadius: 12,
+                            padding: '8px 10px',
+                            color: '#0f172a',
+                            fontSize: 13,
+                            boxShadow: '0 18px 36px rgba(15,23,42,0.16)',
+                            maxWidth: 260,
+                            backdropFilter: 'blur(12px)',
+                        }}
+                    >
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                            {tooltip.title}
+                        </div>
+                        {tooltip.body && (
+                            <div style={{ opacity: 0.75 }}>{tooltip.body}</div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function SpeakingViewToggle({ value, onChange }) {
+    const options = [
+        { id: 'ratio', label: 'Words' },
+        { id: 'duration', label: 'Time' },
+    ];
+
+    return (
+        <div
+            style={{
+                display: 'inline-flex',
+                background: '#eef1f8',
+                borderRadius: 999,
+                padding: 4,
+                border: '1px solid rgba(229,232,242,0.8)',
+                gap: 4,
+            }}
+        >
+            {options.map((opt) => {
+                const active = opt.id === value;
+                return (
+                    <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onChange(opt.id)}
+                        style={{
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: 999,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: active ? '#7a5af8' : 'transparent',
+                            color: active ? '#ffffff' : '#475569',
+                            boxShadow: active ? '0 8px 18px rgba(122,90,248,0.25)' : 'none',
+                            transition: 'all 120ms ease',
+                        }}
+                    >
+                        {opt.label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
 /* ---------- Participation Diagnostics ---------- */
 
 function ParticipationDiagnostics({ participation, mode = 'live' }) {
@@ -992,6 +1534,11 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
         underrepresented = [],
         interruptions,
         longestSilence = {},
+        silence = {},
+        durationSec,
+        balance = { status: 'balanced', reasons: [] },
+        interruptionCounts = {},
+        turnTakingPerMin,
     } = participation;
 
     const totalInterruptions = Number.isFinite(interruptions) ? interruptions : 0;
@@ -1000,6 +1547,23 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
         ? participation.topInterruptionCount
         : null;
     const repetitionSummary = participation.repetitionSummary || {};
+    const interruptionList = Object.entries(interruptionCounts)
+        .map(([name, count]) => ({
+            name,
+            count: Number.isFinite(count) ? count : 0,
+        }))
+        .filter((entry) => entry.count > 0)
+        .sort((a, b) => b.count - a.count);
+    const silenceCount = Array.isArray(silence.periods) ? silence.periods.length : 0;
+    const totalSilenceSec = Number.isFinite(silence.totalSilenceSec)
+        ? silence.totalSilenceSec
+        : null;
+    const silenceRatio = Number.isFinite(silence.silenceRatio)
+        ? silence.silenceRatio
+        : null;
+    const balanceReasons = Array.isArray(balance.reasons)
+        ? balance.reasons.filter(Boolean)
+        : [];
 
     const title =
         mode === 'live'
@@ -1032,7 +1596,7 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 </div>
             ) : (
                 <div>
-                    <strong>Dominant speaker (last few turns):</strong> â€“
+                    <strong>Dominant speaker (last few turns):</strong> -
                 </div>
             )}
 
@@ -1041,7 +1605,8 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                     <strong>Underrepresented voices:</strong>{' '}
                     {underrepresented
                         .map(
-                            (u) => `${u.name} (${(u.share * 100).toFixed(0)}%)`,
+                            (u) =>
+                                `${u.name || 'Unknown'} (${(u.share * 100).toFixed(0)}%)`,
                         )
                         .join(', ')}
                 </div>
@@ -1057,9 +1622,57 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 {topInterrupter && (
                     <>
                         {' '}
-                        â€” mostly by {topInterrupter} (Ã—{topInterruptionCount})
+                        - mostly by {topInterrupter}
+                        {topInterruptionCount ? ` (${topInterruptionCount})` : ''}
                     </>
                 )}
+            </div>
+
+            {interruptionList.length > 0 && (
+                <div>
+                    <strong>Interruptions by speaker:</strong>
+                    <div
+                        style={{
+                            marginTop: 6,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 6,
+                        }}
+                    >
+                        {interruptionList.map((entry) => (
+                            <div
+                                key={entry.name}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                    fontSize: 12,
+                                }}
+                            >
+                                <span style={{ color: '#0f172a' }}>{entry.name}</span>
+                                <span
+                                    style={{
+                                        background: '#eef1f8',
+                                        borderRadius: 999,
+                                        padding: '2px 8px',
+                                        fontWeight: 600,
+                                        color: '#475569',
+                                    }}
+                                >
+                                    {entry.count}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div>
+                <strong>Turn-taking rate:</strong>{' '}
+                {Number.isFinite(turnTakingPerMin)
+                    ? `${turnTakingPerMin.toFixed(2)} turns/min`
+                    : 'not enough timing data yet'}
             </div>
 
             {longestSilence ? (
@@ -1075,6 +1688,29 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                 </div>
             )}
 
+            {totalSilenceSec !== null ? (
+                <div>
+                    <strong>Total silence:</strong>{' '}
+                    {formatTimeSec(totalSilenceSec)}
+                    {silenceRatio !== null && (
+                        <> ({(silenceRatio * 100).toFixed(0)}% of call)</>
+                    )}
+                    {silenceCount > 0 && (
+                        <> across {silenceCount} pause{silenceCount === 1 ? '' : 's'}</>
+                    )}
+                </div>
+            ) : (
+                <div>
+                    <strong>Total silence:</strong> not enough timing data yet
+                </div>
+            )}
+
+            <div>
+                <strong>Dialogue balance:</strong>{' '}
+                {balance.status === 'needs_attention' ? 'Needs attention' : 'Balanced'}
+                {balanceReasons.length > 0 && <> - {balanceReasons.join('; ')}</>}
+            </div>
+
             {Object.keys(repetitionSummary).length > 0 && (
                 <div>
                     <strong>Repetition patterns:</strong>{' '}
@@ -1082,9 +1718,9 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
                         .map(([name, info]) => {
                             const phrase =
                                 (info.phrase || '').length > 40
-                                    ? `${info.phrase.slice(0, 40)}â€¦`
+                                    ? `${info.phrase.slice(0, 40)}...`
                                     : info.phrase || '(short utterance)';
-                            return `${name} keeps repeating â€œ${phrase}â€ (Ã—${info.count})`;
+                            return `${name} keeps repeating "${phrase}" (${info.count})`;
                         })
                         .join('; ')}
                 </div>
@@ -1092,6 +1728,9 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
 
             <div style={{ opacity: 0.7 }}>
                 <strong>Total words in call so far:</strong> {totalWords || 0}
+                {Number.isFinite(durationSec) && (
+                    <> - <strong>Call duration:</strong> {formatTimeSec(durationSec)}</>
+                )}
             </div>
         </div>
     );
@@ -1099,7 +1738,15 @@ function ParticipationDiagnostics({ participation, mode = 'live' }) {
 
 /* ---------- Summary View "page" ---------- */
 
-function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
+function SummaryView({
+    botId,
+    botState,
+    wordCounts,
+    pieData,
+    onBack,
+    speakingView,
+    setSpeakingView,
+}) {
     const transcripts = botState.transcripts || [];
     const participation = botState.participation || null;
     const speakerColors = useMemo(() => {
@@ -1123,6 +1770,15 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
         setSummaryText(botState.summary?.text || '');
         setSummaryFinishReason(botState.summary?.finishReason || null);
     }, [botState.summary]);
+
+    const totalWordsCount =
+        participation?.totalWords ??
+        Object.values(wordCounts || {}).reduce((sum, v) => sum + v, 0);
+    const callDurationSec = participation?.durationSec ?? null;
+    const summaryTranscriptHover = useHoverCard('strong');
+    const summaryAnalyticsHover = useHoverCard('strong');
+    const summaryTimelineHover = useHoverCard('strong');
+    const aiSummaryHover = useHoverCard('strong');
 
     async function handleGenerateSummary() {
         if (!botId) return;
@@ -1186,7 +1842,11 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
 
             <main className="layout-main layout-main--summary">
                 {/* Left: transcript */}
-                <section className="card">
+                <section
+                    className="card"
+                    style={{ alignSelf: 'flex-start', flex: '0 0 auto', ...summaryTranscriptHover.style }}
+                    {...summaryTranscriptHover.handlers}
+                >
                     <div className="card-header">
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1200,7 +1860,7 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                         <span className="badge-small">{transcripts.length} turns</span>
                     </div>
 
-                    <div className="transcript-list">
+                    <div className="transcript-list" style={{ maxHeight: '100vh', overflowY: 'auto', paddingRight: 6 }}>
                         {transcripts.length === 0 && (
                             <div style={{ opacity: 0.6, fontSize: 13 }}>
                                 No transcript captured for this bot.
@@ -1217,7 +1877,12 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                                         gap: 8,
                                     }}
                                 >
-                                    <div className="transcript-speaker">
+                                    <div
+                                        className="transcript-speaker"
+                                        style={{
+                                            color: speakerColors[t.speakerName] || '#7a5af8',
+                                        }}
+                                    >
                                         {t.speakerName}
                                     </div>
                                     {typeof t.startSec === 'number' && (
@@ -1239,7 +1904,11 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                 </section>
 
                 {/* Right: analytics */}
-                <section className="card">
+                <section
+                    className="card"
+                    style={{ alignSelf: 'flex-start', flex: '0 0 auto', ...summaryAnalyticsHover.style }}
+                    {...summaryAnalyticsHover.handlers}
+                >
                     <div className="card-header">
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1250,48 +1919,84 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                         </div>
                     </div>
 
-                    <div className="wordshare-card">
-                        <div className="wordshare-header">
-                            <span>Speaking share (by words)</span>
+                    <div className="wordshare-card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 6,
+                                fontSize: 13,
+                                color: '#0f172a',
+                            }}
+                        >
+                            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <span>
+                                    <strong>Total words in call so far:</strong> {totalWordsCount || 0}
+                                </span>
+                                {Number.isFinite(callDurationSec) && (
+                                    <span>
+                                        <strong>Call duration:</strong> {formatTimeSec(callDurationSec)}
+                                    </span>
+                                )}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ fontSize: 12, opacity: 0.8 }}>Speaking analytics</div>
+                                <SpeakingViewToggle value={speakingView} onChange={setSpeakingView} />
+                            </div>
                         </div>
-                        <div className="wordshare-chart">
-                            {pieData.length > 0 ? (
-                                <WordSharePie data={pieData} colorMap={speakerColors} />
-                            ) : (
-                                <div style={{ opacity: 0.6, fontSize: 12 }}>
-                                    No words counted yet.
+
+                        <div>
+                            <div className="wordshare-header">
+                                <span>Speaking share (by words)</span>
+                            </div>
+                            <div className="wordshare-chart">
+                                {pieData.length > 0 ? (
+                                    <WordSharePie data={pieData} colorMap={speakerColors} />
+                                ) : (
+                                    <div style={{ opacity: 0.6, fontSize: 12 }}>
+                                        No words counted yet.
+                                    </div>
+                                )}
+                            </div>
+
+                            {Object.keys(wordCounts).length > 0 && (
+                                <div
+                                    style={{
+                                        marginTop: 8,
+                                        fontSize: 12,
+                                        opacity: 0.8,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 4,
+                                    }}
+                                >
+                                    {Object.entries(wordCounts).map(([name, count]) => (
+                                        <span key={name}>
+                                            <strong>{name}</strong>: {count} words
+                                        </span>
+                                    ))}
                                 </div>
                             )}
                         </div>
 
-                        {Object.keys(wordCounts).length > 0 && (
-                            <div
-                                style={{
-                                    marginTop: 8,
-                                    fontSize: 12,
-                                    opacity: 0.8,
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: 4,
-                                }}
-                            >
-                                {Object.entries(wordCounts).map(([name, count]) => (
-                                    <span key={name}>
-                                        <strong>{name}</strong>: {count} words
-                                    </span>
-                                ))}
-                            </div>
+                        {participation && speakingView === 'ratio' && (
+                            <SpeakingTimeRatio
+                                participation={participation}
+                                title="Speaking-time ratio"
+                                caption="Share of total words across the full call."
+                                colorMap={speakerColors}
+                            />
+                        )}
+
+                        {participation && speakingView === 'duration' && (
+                            <SpeakingTimeDuration
+                                participation={participation}
+                                title="Speaking time (duration)"
+                                caption="Elapsed speech time per speaker."
+                                colorMap={speakerColors}
+                            />
                         )}
                     </div>
-
-                    {participation && (
-                        <SpeakingTimeRatio
-                            participation={participation}
-                            title="Speaking-time ratio"
-                            caption="Share of total words across the full call."
-                            colorMap={speakerColors}
-                        />
-                    )}
 
                     {botState.participation && (
                         <ParticipationDiagnostics
@@ -1302,8 +2007,33 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                 </section>
             </main>
 
+            <section
+                className="card"
+                style={summaryTimelineHover.style}
+                {...summaryTimelineHover.handlers}
+            >
+                <div className="card-header">
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Icon name="timeline" size={20} />
+                            <h2>Speaking timeline</h2>
+                        </div>
+                        <span>Per-speaker segments with silence gaps shaded.</span>
+                    </div>
+                </div>
+                <SpeakerTimeline
+                    transcripts={transcripts}
+                    participation={participation}
+                    colorMap={speakerColors}
+                />
+            </section>
+
             {/* AI summary card */}
-            <section className="summary-card">
+            <section
+                className="summary-card"
+                style={aiSummaryHover.style}
+                {...aiSummaryHover.handlers}
+            >
                 <div className="summary-card-header">
                     <div className="summary-card-heading">
                         <h2>
@@ -1317,7 +2047,7 @@ function SummaryView({ botId, botState, wordCounts, pieData, onBack }) {
                     <div className="summary-actions">
                         <span className="summary-badge">
                             {summaryLoading
-                                ? 'Refreshing…'
+                                ? 'Refreshing...'
                                 : summaryText
                                 ? 'Up to date'
                                 : 'Needs summary'}
@@ -1479,7 +2209,7 @@ function CoachToast({ message, onClose }) {
                         onMouseEnter={(e) => {
                             e.currentTarget.style.background = '#7a5af8';
                             e.currentTarget.style.color = '#ffffff';
-                            e.currentTarget.style.border = '1px solid #7a5af8';
+                            e.currentTarget.style.border = '1px solidrgb(122, 90, 248)';
                         }}
                         onMouseLeave={(e) => {
                             e.currentTarget.style.background = 'rgba(247,248,253,0.9)';
@@ -1493,3 +2223,11 @@ function CoachToast({ message, onClose }) {
         </div>
     );
 }
+
+
+
+
+
+
+
+

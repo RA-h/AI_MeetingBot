@@ -192,11 +192,24 @@ function computeDiagnostics(state) {
 // Participation metrics (speaking share, turn-taking, silence, interruptions)
 // -------------------------------------------
 function toSeconds(ts) {
-  if (typeof ts === "number") return ts;
+  if (typeof ts === "number") {
+    if (ts > 1e12) return ts / 1000;
+    if (ts > 1e10) return ts / 1000;
+    return ts >= 0 ? ts : null;
+  }
+
   if (typeof ts === "string") {
+    const num = Number(ts);
+    if (!Number.isNaN(num)) {
+      if (num > 1e12) return num / 1000;
+      if (num > 1e10) return num / 1000;
+      return num;
+    }
+
     const d = Date.parse(ts);
     if (!Number.isNaN(d)) return d / 1000;
   }
+
   return null;
 }
 
@@ -235,22 +248,60 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
     .filter(([_, share]) => share < 0.2)
     .map(([name, share]) => ({ name, share }));
 
-  // Turn-taking and interruptions (heuristic: speaker switch with tiny gap counts as interruption)
+  // Turn-taking, interruptions, silence detection
+  const MIN_SILENCE_SEC = 2;
+  const INTERRUPTION_GAP_MAX = 1.5;
   let transitions = 0;
   let interruptions = 0;
+  const interruptionCounts = {};
   let prevSpeaker = null;
-  let prevTime = null;
+  let prevEnd = null;
   let firstTime = null;
   let lastTime = null;
   let longestSilence = { durationSec: 0, fromSec: null, toSec: null };
+  let totalSilenceSec = 0;
+  const silencePeriods = [];
+  const speakingTime = {};
 
-  transcripts.forEach((t) => {
+  const withTiming = transcripts.map((t) => {
+    const start =
+      typeof t.startSec === "number"
+        ? t.startSec
+        : toSeconds(
+            t.createdAt ||
+              (t.words && t.words[0]?.start_timestamp?.absolute) ||
+              t.startSec
+          );
+    let end =
+      typeof t.endSec === "number"
+        ? t.endSec
+        : toSeconds(
+            (t.words && t.words[t.words.length - 1]?.end_timestamp?.absolute) ||
+              (t.words && t.words[t.words.length - 1]?.start_timestamp?.absolute) ||
+              null
+          );
+
+    if (start !== null && end === null && typeof t.durationSec === "number") {
+      end = start + t.durationSec;
+    }
+
+    if (start !== null && end === null) {
+      end = start;
+    }
+
+    return { ...t, startSec: start, endSec: end };
+  });
+
+  withTiming.sort((a, b) => {
+    const sa = typeof a.startSec === "number" ? a.startSec : Number.POSITIVE_INFINITY;
+    const sb = typeof b.startSec === "number" ? b.startSec : Number.POSITIVE_INFINITY;
+    return sa - sb;
+  });
+
+  withTiming.forEach((t) => {
     const curSpeaker = t.speakerName || "Unknown";
-    const curTime = toSeconds(
-      t.createdAt ||
-        (t.words && t.words[0]?.start_timestamp?.absolute) ||
-        t.startSec
-    );
+    const curStart = typeof t.startSec === "number" ? t.startSec : null;
+    const curEnd = typeof t.endSec === "number" ? t.endSec : curStart;
 
     // Track repeated phrases per speaker
     const rawText = (t.text || "").trim();
@@ -274,34 +325,56 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
       }
     }
 
-    if (curTime !== null) {
-      if (firstTime === null) firstTime = curTime;
-      lastTime = curTime;
+    if (curStart !== null) {
+      if (firstTime === null) firstTime = curStart;
+      lastTime = curEnd !== null ? curEnd : curStart;
     }
 
     if (prevSpeaker && curSpeaker !== prevSpeaker) {
       transitions += 1;
-      if (prevTime !== null && curTime !== null) {
-        const gap = curTime - prevTime;
+      if (prevEnd !== null && curStart !== null) {
+        const gap = curStart - prevEnd;
         if (gap > longestSilence.durationSec) {
           longestSilence = {
             durationSec: gap,
-            fromSec: prevTime,
-            toSec: curTime,
+            fromSec: prevEnd,
+            toSec: curStart,
           };
         }
-        if (gap >= 0 && gap <= 1.5) {
+        if (gap >= 0 && gap <= INTERRUPTION_GAP_MAX) {
           interruptions += 1;
+          interruptionCounts[curSpeaker] = (interruptionCounts[curSpeaker] || 0) + 1;
         }
       }
     }
 
+    if (prevEnd !== null && curStart !== null) {
+      const gap = curStart - prevEnd;
+      if (gap > MIN_SILENCE_SEC) {
+        totalSilenceSec += gap;
+        const period = { durationSec: gap, fromSec: prevEnd, toSec: curStart };
+        silencePeriods.push(period);
+        if (gap > longestSilence.durationSec) {
+          longestSilence = period;
+        }
+      }
+    }
+
+    if (curStart !== null && curEnd !== null && curEnd >= curStart) {
+      const dur = curEnd - curStart;
+      speakingTime[curSpeaker] = (speakingTime[curSpeaker] || 0) + dur;
+    }
+
     prevSpeaker = curSpeaker;
-    prevTime = curTime;
+    prevEnd = curEnd;
   });
 
+  const topInterrupter =
+    Object.entries(interruptionCounts).sort((a, b) => b[1] - a[1])[0] || null;
+  const topInterruptionCount = topInterrupter ? topInterrupter[1] : null;
+
   // Recent window dominant
-  const recent = transcripts.slice(-windowSize);
+  const recent = withTiming.slice(-windowSize);
   const recentCounts = {};
   recent.forEach((t) => {
     const name = t.speakerName || "Unknown";
@@ -319,6 +392,9 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
     }
   }
 
+  const durationSec =
+    firstTime !== null && lastTime !== null ? Math.max(0, lastTime - firstTime) : null;
+
   return {
     totalWords,
     totalTurns: transcripts.length,
@@ -328,13 +404,60 @@ function computeParticipationMetrics(transcripts, windowSize = 8) {
     underrepresented,
     transitions,
     interruptions,
+    topInterrupter: topInterrupter ? topInterrupter[0] : null,
+    topInterruptionCount,
+    interruptionCounts,
+    turnTakingPerMin:
+      durationSec && durationSec > 0 ? transitions / (durationSec / 60) : null,
     longestSilence,
+    silence: {
+      totalSilenceSec,
+      averageSilenceSec:
+        silencePeriods.length > 0 ? totalSilenceSec / silencePeriods.length : 0,
+      silenceRatio:
+        firstTime !== null && lastTime !== null && lastTime > firstTime
+          ? totalSilenceSec / Math.max(1, lastTime - firstTime)
+          : null,
+      periods: silencePeriods.slice(-6),
+    },
+    speakingTimeSec: speakingTime,
     window: {
       dominantSpeaker: recentDom,
       dominantShare: recentDomShare,
     },
-    durationSec:
-      firstTime !== null && lastTime !== null ? Math.max(0, lastTime - firstTime) : null,
+    durationSec,
+    balance: (() => {
+      const reasons = [];
+      if (dominantSpeaker && dominantShare > 0.6) {
+        reasons.push(
+          `${dominantSpeaker} has ${(dominantShare * 100).toFixed(0)}% of the words`
+        );
+      }
+      if (
+        firstTime !== null &&
+        lastTime !== null &&
+        totalSilenceSec > 0 &&
+        totalSilenceSec / Math.max(1, lastTime - firstTime) > 0.35
+      ) {
+        reasons.push(
+          `Long silences: ${totalSilenceSec.toFixed(1)}s (~${(
+            (totalSilenceSec / Math.max(1, lastTime - firstTime)) *
+            100
+          ).toFixed(0)}% of call)`
+        );
+      }
+      if (underrepresented.length > 0) {
+        reasons.push(
+          `Quiet speakers: ${underrepresented
+            .map((u) => u.name || "Unknown")
+            .join(", ")}`
+        );
+      }
+      return {
+        status: reasons.length ? "needs_attention" : "balanced",
+        reasons,
+      };
+    })(),
     repetitionSummary: (() => {
       const summary = {};
       for (const [speaker, phrases] of phraseMap.entries()) {
@@ -576,6 +699,16 @@ app.post("/api/recall/webhook", (req, res) => {
       const createdAt =
         (inner.words && inner.words[0]?.start_timestamp?.absolute) ||
         new Date().toISOString();
+      const startAbs =
+        words[0]?.start_timestamp?.absolute ||
+        words[0]?.start_timestamp?.relative ||
+        createdAt;
+      const endAbs =
+        words[words.length - 1]?.end_timestamp?.absolute ||
+        words[words.length - 1]?.start_timestamp?.absolute ||
+        null;
+      const startSec = toSeconds(startAbs);
+      const endSec = toSeconds(endAbs || startAbs);
 
       const utter = {
         id: inner.id || `${Date.now()}`,
@@ -583,6 +716,10 @@ app.post("/api/recall/webhook", (req, res) => {
         speakerName: participant.name || "Unknown",
         text,
         createdAt,
+        startSec,
+        endSec,
+        durationSec:
+          startSec !== null && endSec !== null ? Math.max(0, endSec - startSec) : null,
       };
 
       const sample = text.length > 120 ? `${text.slice(0, 120)}…` : text;

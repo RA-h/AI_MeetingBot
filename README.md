@@ -19,7 +19,6 @@ You will need to install cloudflare. Do this from your default system terminal p
 1. Set keys in .env (your actual API Keys)
     - an example format is shown in .env.example 
     - Public URL Base will be empty for now... If you have one of your own though, set it here.
-    - 
 
 2. Open 3 terminals (RUN IN EXACT ORDER): 
    - `cd backend` --> `npm install` (once) --> `npm run tunnel` 
