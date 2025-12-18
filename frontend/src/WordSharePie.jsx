@@ -18,10 +18,13 @@ const COLORS = [
     '#91a3ee',
 ];
 
-function WordShareTooltip({ active, payload }) {
+function WordShareTooltip({ active, payload, valueFormatter, valueSuffix }) {
     if (!active || !payload || !payload.length) return null;
 
     const { name, value } = payload[0];
+    const formatted =
+        typeof valueFormatter === 'function' ? valueFormatter(value) : value;
+    const suffix = valueSuffix || '';
 
     return (
         <div
@@ -38,12 +41,15 @@ function WordShareTooltip({ active, payload }) {
             }}
         >
             <div style={{ fontWeight: 600, marginBottom: 2 }}>{name}</div>
-            <div style={{ opacity: 0.75 }}>{value} words</div>
+            <div style={{ opacity: 0.75 }}>
+                {formatted}
+                {suffix ? ` ${suffix}` : ''}
+            </div>
         </div>
     );
 }
 
-export default function WordSharePie({ data, colorMap }) {
+export default function WordSharePie({ data, colorMap, valueFormatter, valueSuffix }) {
     if (!data || data.length === 0) {
         return (
             <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -75,7 +81,12 @@ export default function WordSharePie({ data, colorMap }) {
 
                     {/* Custom tooltip with light text */}
                     <Tooltip
-                        content={<WordShareTooltip />}
+                        content={
+                            <WordShareTooltip
+                                valueFormatter={valueFormatter}
+                                valueSuffix={valueSuffix}
+                            />
+                        }
                         cursor={{ stroke: 'rgba(148,163,184,0.3)', strokeWidth: 1 }}
                     />
                 </PieChart>

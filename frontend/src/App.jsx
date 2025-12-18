@@ -197,6 +197,15 @@ export default function App() {
         [transcripts],
     );
     const pieData = useMemo(() => buildPieData(wordCounts), [wordCounts]);
+    const timeCounts = useMemo(() => {
+        const counts = {};
+        const raw = participation?.speakingTimeSec || {};
+        Object.entries(raw).forEach(([name, sec]) => {
+            if (Number.isFinite(sec) && sec > 0) counts[name] = sec;
+        });
+        return counts;
+    }, [participation?.speakingTimeSec]);
+    const timePieData = useMemo(() => buildPieData(timeCounts), [timeCounts]);
     const speakerColors = useMemo(() => {
         const map = {};
         pieData.forEach((d, idx) => {
@@ -747,11 +756,31 @@ export default function App() {
 
                                     <div>
                                         <div className="wordshare-header">
-                                            <span>Speaking share (by words)</span>
+                                            <span>
+                                                {speakingView === 'duration'
+                                                    ? 'Speaking share (by time)'
+                                                    : 'Speaking share (by words)'}
+                                            </span>
                                         </div>
                                         <div className="wordshare-chart">
-                                            {pieData.length > 0 ? (
-                                                <WordSharePie data={pieData} colorMap={speakerColors} />
+                                            {speakingView === 'duration' ? (
+                                                timePieData.length > 0 ? (
+                                                    <WordSharePie
+                                                        data={timePieData}
+                                                        colorMap={speakerColors}
+                                                        valueFormatter={formatTimeSec}
+                                                    />
+                                                ) : (
+                                                    <div style={{ opacity: 0.6, fontSize: 12 }}>
+                                                        No speaking time captured yet.
+                                                    </div>
+                                                )
+                                            ) : pieData.length > 0 ? (
+                                                <WordSharePie
+                                                    data={pieData}
+                                                    colorMap={speakerColors}
+                                                    valueSuffix="words"
+                                                />
                                             ) : (
                                                 <div style={{ opacity: 0.6, fontSize: 12 }}>
                                                     No words counted yet.
@@ -759,24 +788,45 @@ export default function App() {
                                             )}
                                         </div>
 
-                                        {Object.keys(wordCounts).length > 0 && (
-                                            <div
-                                                style={{
-                                                    marginTop: 8,
-                                                    fontSize: 12,
-                                                    opacity: 0.8,
-                                                    display: 'flex',
-                                                    flexDirection: 'column',
-                                                    gap: 4,
-                                                }}
-                                            >
-                                                {Object.entries(wordCounts).map(([name, count]) => (
-                                                    <span key={name}>
-                                                        <strong>{name}</strong>: {count} words
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
+                                        {speakingView === 'duration'
+                                            ? Object.keys(timeCounts).length > 0 && (
+                                                  <div
+                                                      style={{
+                                                          marginTop: 8,
+                                                          fontSize: 12,
+                                                          opacity: 0.8,
+                                                          display: 'flex',
+                                                          flexDirection: 'column',
+                                                          gap: 4,
+                                                      }}
+                                                  >
+                                                      {Object.entries(timeCounts).map(
+                                                          ([name, seconds]) => (
+                                                              <span key={name}>
+                                                                  <strong>{name}</strong>: {formatTimeSec(seconds)}
+                                                              </span>
+                                                          ),
+                                                      )}
+                                                  </div>
+                                              )
+                                            : Object.keys(wordCounts).length > 0 && (
+                                                  <div
+                                                      style={{
+                                                          marginTop: 8,
+                                                          fontSize: 12,
+                                                          opacity: 0.8,
+                                                          display: 'flex',
+                                                          flexDirection: 'column',
+                                                          gap: 4,
+                                                      }}
+                                                  >
+                                                      {Object.entries(wordCounts).map(([name, count]) => (
+                                                          <span key={name}>
+                                                              <strong>{name}</strong>: {count} words
+                                                          </span>
+                                                      ))}
+                                                  </div>
+                                              )}
                                     </div>
 
                                     {participation && speakingView === 'ratio' && (
@@ -1777,6 +1827,15 @@ function SummaryView({
         participation?.totalWords ??
         Object.values(wordCounts || {}).reduce((sum, v) => sum + v, 0);
     const callDurationSec = participation?.durationSec ?? null;
+    const timeCounts = useMemo(() => {
+        const counts = {};
+        const raw = participation?.speakingTimeSec || {};
+        Object.entries(raw).forEach(([name, sec]) => {
+            if (Number.isFinite(sec) && sec > 0) counts[name] = sec;
+        });
+        return counts;
+    }, [participation?.speakingTimeSec]);
+    const timePieData = useMemo(() => buildPieData(timeCounts), [timeCounts]);
     const summaryTranscriptHover = useHoverCard('strong');
     const summaryAnalyticsHover = useHoverCard('strong');
     const summaryTimelineHover = useHoverCard('strong');
@@ -1949,11 +2008,31 @@ function SummaryView({
 
                         <div>
                             <div className="wordshare-header">
-                                <span>Speaking share (by words)</span>
+                                <span>
+                                    {speakingView === 'duration'
+                                        ? 'Speaking share (by time)'
+                                        : 'Speaking share (by words)'}
+                                </span>
                             </div>
                             <div className="wordshare-chart">
-                                {pieData.length > 0 ? (
-                                    <WordSharePie data={pieData} colorMap={speakerColors} />
+                                {speakingView === 'duration' ? (
+                                    timePieData.length > 0 ? (
+                                        <WordSharePie
+                                            data={timePieData}
+                                            colorMap={speakerColors}
+                                            valueFormatter={formatTimeSec}
+                                        />
+                                    ) : (
+                                        <div style={{ opacity: 0.6, fontSize: 12 }}>
+                                            No speaking time captured yet.
+                                        </div>
+                                    )
+                                ) : pieData.length > 0 ? (
+                                    <WordSharePie
+                                        data={pieData}
+                                        colorMap={speakerColors}
+                                        valueSuffix="words"
+                                    />
                                 ) : (
                                     <div style={{ opacity: 0.6, fontSize: 12 }}>
                                         No words counted yet.
@@ -1961,24 +2040,43 @@ function SummaryView({
                                 )}
                             </div>
 
-                            {Object.keys(wordCounts).length > 0 && (
-                                <div
-                                    style={{
-                                        marginTop: 8,
-                                        fontSize: 12,
-                                        opacity: 0.8,
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 4,
-                                    }}
-                                >
-                                    {Object.entries(wordCounts).map(([name, count]) => (
-                                        <span key={name}>
-                                            <strong>{name}</strong>: {count} words
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
+                            {speakingView === 'duration'
+                                ? Object.keys(timeCounts).length > 0 && (
+                                      <div
+                                          style={{
+                                              marginTop: 8,
+                                              fontSize: 12,
+                                              opacity: 0.8,
+                                              display: 'flex',
+                                              flexDirection: 'column',
+                                              gap: 4,
+                                          }}
+                                      >
+                                          {Object.entries(timeCounts).map(([name, seconds]) => (
+                                              <span key={name}>
+                                                  <strong>{name}</strong>: {formatTimeSec(seconds)}
+                                              </span>
+                                          ))}
+                                      </div>
+                                  )
+                                : Object.keys(wordCounts).length > 0 && (
+                                      <div
+                                          style={{
+                                              marginTop: 8,
+                                              fontSize: 12,
+                                              opacity: 0.8,
+                                              display: 'flex',
+                                              flexDirection: 'column',
+                                              gap: 4,
+                                          }}
+                                      >
+                                          {Object.entries(wordCounts).map(([name, count]) => (
+                                              <span key={name}>
+                                                  <strong>{name}</strong>: {count} words
+                                              </span>
+                                          ))}
+                                      </div>
+                                  )}
                         </div>
 
                         {participation && speakingView === 'ratio' && (
